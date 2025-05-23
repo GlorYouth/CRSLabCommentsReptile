@@ -1,127 +1,114 @@
 # syntax=docker/dockerfile:1.4
-# 用于使用 musl 目标构建 crslab_comments_reptile Rust 应用程序的 Dockerfile
+# 用于使用 musl 目标构建 crslab_comments_reptile Rust 应用程序的 RELEASE 版本的 Dockerfile
 # 此版本会从源码编译 OpenCC 以实现静态链接
 
 # --- OpenCC 版本 ---
-    ARG OPENCC_VERSION=1.1.7
+ARG OPENCC_VERSION=1.1.7
 
-    # 阶段 0: 构建 OpenCC 静态库
-    FROM alpine:3.18 AS opencc_builder
-    ARG OPENCC_VERSION
-    WORKDIR /opt
-    
-    # 安装 OpenCC 编译依赖
-    RUN apk add --no-cache \
-        cmake \
-        make \
-        g++ \
-        util-linux # 提供 more, 用于检查文件
-        # tclap (OpenCC 命令行工具的依赖, 可选，但通常包含)
-        # python3 pybind11-dev (如果需要 Python 绑定, 此处不需要)
-    
-    # 下载 OpenCC 源码
-    RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
-        tar xzf opencc.tar.gz && \
-        rm opencc.tar.gz
-    
-    # 编译并安装 OpenCC 静态库
-    # BUILD_SHARED_LIBS=OFF 是关键
-    # ENABLE_GTEST=OFF, ENABLE_BENCHMARK=OFF, ENABLE_DARTS=OFF 减少编译时间和体积
-    # CMAKE_INSTALL_PREFIX=/usr/local 使其安装到标准位置
-    RUN cd OpenCC-${OPENCC_VERSION} && \
-        cmake . \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DENABLE_GTEST=OFF \
-            -DENABLE_BENCHMARK=OFF \
-            -DENABLE_DARTS=OFF \
-            -DCMAKE_INSTALL_PREFIX=/usr/local && \
-        make -j$(nproc) && \
-        make install
-    
-    # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
-    FROM rust:alpine AS chef
-    WORKDIR /app
-    
-    # 从 opencc_builder 阶段复制静态编译的 OpenCC 库和头文件
-    COPY --from=opencc_builder /usr/local /usr/local
-    
-    # 安装 musl-dev, build-base（用于 C/C++ 编译器），
-    # openssl-dev（用于 OpenSSL 头文件/库）
-    # gcc 和 g++ 包含在 build-base 中。
-    # 添加 perl 用于 openssl 编译
-    # 注意：不再需要 opencc-dev，因为我们从源码编译了
-    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-    
-    # 安装 cargo-chef 工具
-    RUN cargo install cargo-chef --locked
-    
-    # 复制整个项目源代码
-    COPY . .
-    
-    # 使用 cargo-chef 准备构建食谱（依赖项哈希）
-    RUN cargo chef prepare --recipe-path recipe.json
-    
-    # 阶段 2: 构建所有依赖项 (使用 planner 阶段)
-    FROM rust:alpine AS planner
-    WORKDIR /app
-    
-    # 从 opencc_builder 阶段复制静态编译的 OpenCC
-    COPY --from=opencc_builder /usr/local /usr/local
-    # 从 chef 阶段复制已安装的 cargo-chef 可执行文件
-    COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
-    RUN chmod +x /usr/local/bin/cargo-chef
-    # 从 chef 阶段复制生成的食谱文件
-    COPY --from=chef /app/recipe.json recipe.json
-    
-    # 在 planner 阶段安装编译项目依赖所需的系统库
-    # 注意：不再需要 opencc-dev
-    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-    
-    # 添加 x86_64-unknown-linux-musl 目标
-    RUN rustup target add x86_64-unknown-linux-musl
-    
-    # 设置 RUSTFLAGS 以进行完全静态链接 (针对项目依赖的编译)
-    # 强制 openssl-sys 和 opencc-sys 静态链接
-    ENV OPENSSL_STATIC=1
-    ENV OPENCC_STATIC=1 # 告知 opencc-sys crate 尝试静态链接
-    ENV RUSTFLAGS="-C target-feature=+crt-static"
-    # 确保 pkg-config 能找到我们安装的 OpenCC
-    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-    
-    # 构建依赖项的 release 版本，使用 musl 目标
-    RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
-    
-    # 阶段 3: 构建应用程序本身
-    FROM rust:alpine AS builder
-    WORKDIR /app
-    
-    # 从 opencc_builder 阶段复制静态编译的 OpenCC
-    COPY --from=opencc_builder /usr/local /usr/local
-    # 从 planner 阶段复制已构建的依赖项和 cargo 注册表缓存
-    COPY --from=planner /app/target target
-    COPY --from=planner /usr/local/cargo /usr/local/cargo
-    
-    # 在 builder 阶段安装编译应用程序本身所需的系统库
-    # 注意：不再需要 opencc-dev
-    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-    
-    # 复制您的应用程序源代码
-    COPY . .
-    
-    # 添加 x86_64-unknown-linux-musl 目标
-    RUN rustup target add x86_64-unknown-linux-musl
-    
-    # 设置 RUSTFLAGS 以进行完全静态链接
-    ENV RUSTFLAGS="-C target-feature=+crt-static"
-    ENV PKG_CONFIG_ALLOW_CROSS=1 # 通常用于交叉编译场景，musl构建有时也需要
-    ENV OPENSSL_STATIC=1
-    ENV OPENCC_STATIC=1 # 再次确保 opencc-sys 尝试静态链接
-    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" # 确保 pkg-config 路径
-    
-    # 编译您的 Rust 应用程序的 release 版本，使用 musl 目标
-    RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
-    
-    # 将最终二进制文件移动到一个已知位置，以便轻松提取
-    RUN mv target/x86_64-unknown-linux-musl/release/crslab_comments_reptile /crslab_comments_reptile_final
-    
+# 阶段 0: 构建 OpenCC 静态库
+FROM alpine:3.18 AS opencc_builder
+ARG OPENCC_VERSION
+WORKDIR /opt
+
+# 安装 OpenCC 编译依赖
+RUN apk add --no-cache \
+    cmake \
+    make \
+    g++ \
+    util-linux # 提供 more, 用于检查文件
+
+# 下载 OpenCC 源码
+RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
+    tar xzf opencc.tar.gz && \
+    rm opencc.tar.gz
+
+# 编译并安装 OpenCC 静态库
+# BUILD_SHARED_LIBS=OFF 是关键
+# CMAKE_BUILD_TYPE=Release 用于 Release 构建
+RUN cd OpenCC-${OPENCC_VERSION} && \
+    cmake . \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_GTEST=OFF \
+        -DENABLE_BENCHMARK=OFF \
+        -DENABLE_DARTS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    make -j$(nproc) && \
+    make install
+
+# 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
+FROM rust:alpine AS chef
+WORKDIR /app
+
+# 从 opencc_builder 阶段复制静态编译的 OpenCC 库和头文件
+COPY --from=opencc_builder /usr/local /usr/local
+
+# 安装编译所需的系统依赖
+RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+
+# 安装 cargo-chef 工具
+RUN cargo install cargo-chef --locked
+
+# 复制整个项目源代码
+COPY . .
+
+# 使用 cargo-chef 准备构建食谱（依赖项哈希）
+RUN cargo chef prepare --recipe-path recipe.json
+
+# 阶段 2: 构建所有依赖项 (使用 planner 阶段 - Release 模式)
+FROM rust:alpine AS planner
+WORKDIR /app
+
+# 从 opencc_builder 阶段复制静态编译的 OpenCC
+COPY --from=opencc_builder /usr/local /usr/local
+# 从 chef 阶段复制已安装的 cargo-chef 可执行文件和配方文件
+COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+RUN chmod +x /usr/local/bin/cargo-chef
+COPY --from=chef /app/recipe.json recipe.json
+
+# 安装编译项目依赖所需的系统库
+RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+
+# 添加 x86_64-unknown-linux-musl 目标
+RUN rustup target add x86_64-unknown-linux-musl
+
+# 设置环境变量以进行静态链接
+ENV OPENSSL_STATIC=1
+ENV OPENCC_STATIC=1 
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+
+# 构建依赖项的 RELEASE 版本，使用 musl 目标
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
+
+# 阶段 3: 构建应用程序本身 (Release 模式)
+FROM rust:alpine AS builder
+WORKDIR /app
+
+# 从 opencc_builder 阶段复制静态编译的 OpenCC
+COPY --from=opencc_builder /usr/local /usr/local
+# 从 planner 阶段复制已构建的依赖项和 cargo 缓存
+COPY --from=planner /app/target target
+COPY --from=planner /usr/local/cargo /usr/local/cargo
+
+# 安装编译应用程序本身所需的系统库
+RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+
+# 复制您的应用程序源代码
+COPY . .
+
+# 添加 x86_64-unknown-linux-musl 目标
+RUN rustup target add x86_64-unknown-linux-musl
+
+# 设置环境变量以进行静态链接
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+ENV PKG_CONFIG_ALLOW_CROSS=1 
+ENV OPENSSL_STATIC=1
+ENV OPENCC_STATIC=1 
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+
+# 编译您的 Rust 应用程序的 RELEASE 版本，使用 musl 目标
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
+
+# 将最终二进制文件移动到一个已知位置
+RUN mv target/x86_64-unknown-linux-musl/release/crslab_comments_reptile /crslab_comments_reptile_final
