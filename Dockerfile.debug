@@ -110,7 +110,8 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY --from=opencc_builder /usr/local /usr/local
 # 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
-COPY --from=chef /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
+# *** 修改：修正 cargo-chef 的源路径 ***
+COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef 
 COPY --from=chef /app/recipe.json recipe.json
 
 # 安装编译依赖 (确保此阶段也有)
