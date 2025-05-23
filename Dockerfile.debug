@@ -45,7 +45,7 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
-        -DENABLE_MARISA=ON \ # 确保启用了 Marisa 支持
+        -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install
