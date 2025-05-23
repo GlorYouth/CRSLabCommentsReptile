@@ -1,33 +1,12 @@
 # syntax=docker/dockerfile:1.4
 # 使用 Debian 10 (Slim) 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 DEBUG 版本
 
-
-# 阶段 0: 在 Debian 10 上构建 OpenCC 和 Marisa-trie 静态库 (Debug 模式)
-FROM debian:10-slim AS opencc_builder
-WORKDIR /opt
-
-# 设置 DEBIAN_FRONTEND 为非交互式
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 安装编译依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    wget \
-    python3 \
-    git \
-    autoconf \
-    automake \
-    libtool \
-    ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-
 # 阶段 1: Rust 环境准备和依赖编译 (cargo-chef) - 基于 Debian 10 Slim
 FROM debian:10-slim AS chef
 WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 安装 Rust 编译所需依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -37,15 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 安装 Rustup 和 stable 工具链
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
     /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
     echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc
 
-COPY --from=opencc_builder /usr/local /usr/local
-
+# 安装 cargo-chef
 RUN cargo install cargo-chef --locked
+# 复制项目文件
 COPY . .
+# 准备依赖的 recipe
 RUN cargo chef prepare --recipe-path recipe.json
 
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式) - 基于 Debian 10 Slim
@@ -54,11 +35,14 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-COPY --from=opencc_builder /usr/local /usr/local
+# 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
+# 复制 cargo-chef 可执行文件
 COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+# 复制依赖 recipe
 COPY --from=chef /app/recipe.json recipe.json
 
+# 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -66,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 确保 Rustup 正常工作
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (planner stage) ---"; \
         /root/.cargo/bin/rustup show; \
@@ -77,10 +62,11 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
+# 设置 PKG_CONFIG 环境变量，以进行交叉编译和静态链接 (Debug 模式下通常不需要 OPENSSL_STATIC)
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1 
 
-# 构建依赖 (Debug 模式，因为没有 --release)
+# 构建依赖 (Debug 模式，没有 --release 标志)
 RUN cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Debug 模式) - 基于 Debian 10 Slim
@@ -89,10 +75,11 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-COPY --from=opencc_builder /usr/local /usr/local
+# 复制已编译的依赖和 Rust 工具链
 COPY --from=planner /app/target target
 COPY --from=planner /root/.cargo /root/.cargo
 
+# 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -100,8 +87,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 复制项目源代码
 COPY . .
 
+# 再次确认 Rustup 正常工作并添加目标
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (builder stage) ---"; \
         /root/.cargo/bin/rustup show; \
@@ -129,21 +118,16 @@ RUN mkdir -p .cargo && \
     echo '  "-C", "link-arg=-Wl,-Bdynamic"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
-# 环境变量
-ENV OPENCC_STATIC=1
-ENV OPENCC_LIB_DIRS=/usr/local/lib
-ENV OPENCC_LIBS=opencc:marisa
-ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-ENV OPENCC_DYLIB_STDCPP=1 
-
+# 设置 PKG_CONFIG 环境变量，以进行交叉编译和静态链接
 ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
 
-# 构建应用 (Debug 模式，因为没有 --release)
+# 构建应用 (Debug 模式，没有 --release 标志)
 RUN cargo build --target x86_64-unknown-linux-gnu --bin crslab_comments_reptile --verbose
+# 将最终的二进制文件移动到指定位置并重命名
 RUN mv target/x86_64-unknown-linux-gnu/debug/crslab_comments_reptile /crslab_comments_reptile_debug
+
 
 # 最终阶段：基于 Debian 10 Slim
 FROM debian:10-slim AS final

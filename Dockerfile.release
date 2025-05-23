@@ -1,51 +1,32 @@
 # syntax=docker/dockerfile:1.4
 # 使用 Debian 10 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 RELEASE 版本
 
-# 阶段 0: 在 Debian 10 上构建 OpenCC 和 Marisa-trie 静态库
-FROM debian:10-slim AS opencc_builder
-WORKDIR /opt
-
-# 设置 DEBIAN_FRONTEND 为非交互式
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 安装编译依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    wget \
-    python3 \
-    git \
-    autoconf \
-    automake \
-    libtool \
-    ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
 # 阶段 1: Rust 环境准备和依赖编译 (cargo-chef)
 FROM debian:10-slim AS chef
 WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 安装 Rust 编译所需依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    # libssl-dev 用于 OpenSSL 开发文件
     libssl-dev \
-    # pkg-config 用于定位库
     pkg-config \
     curl \
     git \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 安装 Rustup 和 stable 工具链
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
     /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
     echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc
 
-COPY --from=opencc_builder /usr/local /usr/local
-
+# 安装 cargo-chef
 RUN cargo install cargo-chef --locked
+# 复制项目文件
 COPY . .
+# 准备依赖的 recipe
 RUN cargo chef prepare --recipe-path recipe.json
 
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Release 模式)
@@ -54,13 +35,14 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# 复制 OpenCC 和 Marisa
-COPY --from=opencc_builder /usr/local /usr/local
 # 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
+# 复制 cargo-chef 可执行文件
 COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+# 复制依赖 recipe
 COPY --from=chef /app/recipe.json recipe.json
 
+# 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -68,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 确保 Rustup 正常工作
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (planner stage) ---"; \
         /root/.cargo/bin/rustup show; \
@@ -79,8 +62,8 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
+# 设置环境变量以尝试静态链接 OpenSSL 和其他库
 ENV OPENSSL_STATIC=1
-# ENV RUSTFLAGS="-C target-feature=+crt-static" # 在 Glibc Release 构建中通常不需要
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1 
 
@@ -93,11 +76,11 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-COPY --from=opencc_builder /usr/local /usr/local
+# 复制已编译的依赖和 Rust 工具链
 COPY --from=planner /app/target target
-# 复制 cargo 和 rustc
 COPY --from=planner /root/.cargo /root/.cargo
 
+# 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -105,8 +88,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 复制项目源代码
 COPY . .
 
+# 再次确认 Rustup 正常工作并添加目标
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (builder stage) ---"; \
         /root/.cargo/bin/rustup show; \
@@ -124,8 +109,6 @@ RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
     echo 'rustflags = [' >> .cargo/config.toml && \
-    # 对于 Glibc 目标，通常不强制 +crt-static，因为我们会动态链接 Glibc
-    # echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && 
     echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml && \
@@ -133,19 +116,17 @@ RUN mkdir -p .cargo && \
     echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-ldl",' >> .cargo/config.toml && \
-    # 切换回动态链接，以允许 Glibc 核心库等动态链接
     echo '  "-C", "link-arg=-Wl,-Bdynamic"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
-
+# 设置 PKG_CONFIG 环境变量，以进行交叉编译和静态链接
 ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
 
 # 使用 --release 标志编译应用
 RUN cargo build --release --target x86_64-unknown-linux-gnu --bin crslab_comments_reptile --verbose
-# 移动到最终的 release 产物名称
+# 将最终的二进制文件移动到指定位置并重命名
 RUN mv target/x86_64-unknown-linux-gnu/release/crslab_comments_reptile /crslab_comments_reptile_final
 
 # 最终阶段：基于一个包含 Glibc 的最小 Debian 镜像
