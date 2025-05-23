@@ -107,7 +107,8 @@ ENV OPENCC_INCLUDE_DIRS=/usr/local/include
 # 尝试让 build.rs 处理 libstdc++
 ENV OPENCC_DYLIB_STDCPP=1
 
-ENV OPENSSL_STATIC=1 # 尝试静态链接 OpenSSL
+# 尝试静态链接 OpenSSL
+ENV OPENSSL_STATIC=1
 # 对于 Glibc 下的完全静态链接，RUSTFLAGS 会非常关键
 # LDFLAGS="-static" 可能需要在编译 C/C++ 依赖时也设置
 # 尝试静态链接C运行时
