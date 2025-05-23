@@ -1,14 +1,13 @@
 [package]
 name = "crslab_comments_reptile"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
 serde_json = "1.0.140"
-reqwest = { version = "0.12.15", default-features = false, features = ["json", "native-tls-vendored", "blocking"] } # 根据需要调整特性
-tokio = { version = "1.45.0", features = ["full"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls"] } # 根据需要调整特性
+tokio = { version = "1.45.0", default-features = false, features = ["macros", "rt-multi-thread"] }
 scraper = "0.23.1"
-opencc-rust = "1.1.19"
 url = "2.5.4"
 
 [profile.dev]
