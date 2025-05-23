@@ -38,20 +38,39 @@ RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSI
     make install && \
     cd .. && rm -rf marisa-trie-${MARISA_VERSION} marisa.tar.gz
 
-# 下载、编译并安装 OpenCC
-# 注意 OpenCC 的标签格式是 ver.X.Y.Z
+# 下载 OpenCC 源码
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
     tar xzf opencc.tar.gz && \
-    cd OpenCC-ver.${OPENCC_VERSION} && \
+    rm opencc.tar.gz
+
+# 进入源码目录并尝试修复头文件问题
+# 然后编译并安装 OpenCC 静态库
+RUN cd OpenCC-ver.${OPENCC_VERSION} && \
+    # 在可能出错的文件顶部添加 #include <cstdint>
+    # 您可能需要根据实际报错的文件列表调整这里
+    echo "Attempting to patch OpenCC source files..." && \
+    if [ -f src/SerializedValues.hpp ]; then \
+        sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.hpp && \
+        echo "Patched src/SerializedValues.hpp"; \
+    fi && \
+    if [ -f src/SerializedValues.cpp ]; then \
+        sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.cpp && \
+        echo "Patched src/SerializedValues.cpp"; \
+    fi && \
+    # （如果其他文件也报类似错误，继续在这里添加 sed 命令）
+    # 例如：
+    # if [ -f src/AnotherFile.hpp ]; then \
+    #     sed -i '1s/^/#include <cstdint>\n/' src/AnotherFile.hpp && \
+    #     echo "Patched src/AnotherFile.hpp"; \
+    # fi && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
-        # 确保启用了 Marisa 支持
         -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install && \
-    cd .. && rm -rf OpenCC-ver.${OPENCC_VERSION} opencc.tar.gz
+    cd .. && rm -rf OpenCC-ver.${OPENCC_VERSION}
 
 # 阶段 1: Rust 环境准备和依赖编译 (cargo-chef)
 FROM archlinux:latest AS chef
