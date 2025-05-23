@@ -9,7 +9,7 @@ ARG OPENCC_VERSION=1.1.7
 FROM alpine:3.18 AS opencc_builder
 ARG OPENCC_VERSION
 WORKDIR /opt
-RUN apk add --no-cache cmake make g++ util-linux wget
+RUN apk add --no-cache cmake make g++ util-linux wget python3
 
 # 下载 OpenCC 源码
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
