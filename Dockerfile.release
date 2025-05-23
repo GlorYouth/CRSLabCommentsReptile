@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-# 用于使用 musl 目标构建 crslabcommentsreptile Rust 应用程序的 Dockerfile
+# 用于使用 musl 目标构建 crslab_comments_reptile Rust 应用程序的 Dockerfile
 
 # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
 # 使用指定的 Rust Alpine 基础镜像
@@ -9,7 +9,7 @@ WORKDIR /app
 # 安装 musl-dev, build-base（用于 C/C++ 编译器），
 # opencc-dev（用于 OpenCC 头文件/库），openssl-dev（用于 OpenSSL 头文件/库）
 # gcc 和 g++ 包含在 build-base 中。
-# --- 新增: 添加 perl ---
+# 添加 perl 用于 openssl 编译
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++ perl
 
 # 安装 cargo-chef 工具
@@ -36,7 +36,7 @@ COPY --from=chef /app/recipe.json recipe.json
 
 # 在 planner 阶段安装编译项目依赖所需的系统库
 # 这些是项目依赖编译时可能需要的，例如 openssl-dev, opencc-dev
-# --- 新增: 添加 perl ---
+# 添加 perl 用于 openssl 编译
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++ perl
 
 # 添加 x86_64-unknown-linux-musl 目标
@@ -62,7 +62,7 @@ COPY --from=planner /usr/local/cargo /usr/local/cargo
 
 # 在 builder 阶段安装编译应用程序本身所需的系统库
 # 确保编译环境一致
-# --- 新增: 添加 perl ---
+# 添加 perl 用于 openssl 编译
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++ perl
 
 # 复制您的应用程序源代码（这会使此层在源代码更改时失效，以重新编译应用程序）
@@ -78,10 +78,11 @@ ENV PKG_CONFIG_ALLOW_CROSS=1
 # 确保 OpenSSL 静态链接
 ENV OPENSSL_STATIC=1
 
+# --- 修改: 使用正确的二进制文件名 'crslab_comments_reptile' ---
 # 编译您的 Rust 应用程序的 release 版本，使用 musl 目标
-# 根据您的仓库，二进制文件名为 crslabcommentsreptile
-RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslabcommentsreptile
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
 
+# --- 修改: 使用正确的二进制文件名 'crslab_comments_reptile' 并相应调整最终产物名 ---
 # 将最终二进制文件移动到一个已知位置，以便轻松提取
-# 此二进制文件将在 builder 容器内部的 /crslabcommentsreptile_final 找到
-RUN mv target/x86_64-unknown-linux-musl/release/crslabcommentsreptile /crslabcommentsreptile_final
+# 此二进制文件将在 builder 容器内部的 /crslab_comments_reptile_final 找到
+RUN mv target/x86_64-unknown-linux-musl/release/crslab_comments_reptile /crslab_comments_reptile_final
