@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 # 用于构建 crslab_comments_reptile Rust 应用程序 DEBUG 版本的 Dockerfile (使用 musl 目标)
 # 此版本会从源码编译 OpenCC (及其依赖 Marisa) 以实现静态链接，
-# 并主要通过 opencc-rust crate 的环境变量来指导链接。
+# 并主要通过 opencc-rust crate 的环境变量以及强制链接器参数来指导链接。
 
 # --- OpenCC 和 Marisa 版本 ---
 ARG OPENCC_VERSION=1.1.7
@@ -23,7 +23,7 @@ RUN apk add --no-cache \
     python3 \
     autoconf \
     automake \
-    libtool # Marisa-trie 需要 autotools
+    libtool
 
 # 下载、编译并安装 Marisa-trie (OpenCC 的依赖)
 RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSION}.tar.gz -O marisa.tar.gz && \
@@ -45,6 +45,7 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
+        # 确保启用了 Marisa 支持
         -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
@@ -53,7 +54,7 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
 # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
 FROM rust:alpine AS chef
 WORKDIR /app
-# 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa 的头文件和库
 COPY --from=opencc_builder /usr/local /usr/local
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
 RUN cargo install cargo-chef --locked
@@ -63,7 +64,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
 FROM rust:alpine AS planner
 WORKDIR /app
-# 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa 的头文件和库
 COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 RUN chmod +x /usr/local/bin/cargo-chef
@@ -74,14 +75,13 @@ RUN rustup target add x86_64-unknown-linux-musl
 # 设置 opencc-rust crate 所需的环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
-# 明确链接 opencc 和 marisa
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-# 关键：指示 build.rs 处理 libstdc++ 的链接
 ENV OPENCC_DYLIB_STDCPP=1
+
 # 保持 OpenSSL 静态链接
 ENV OPENSSL_STATIC=1
-# 基础静态链接标志 (主要影响 chef cook 阶段的依赖)
+# 基础静态链接标志 (主要影响 chef cook 阶段的依赖编译)
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
@@ -90,21 +90,29 @@ RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
 # 阶段 3: 构建应用程序本身 (Debug 模式)
 FROM rust:alpine AS builder
 WORKDIR /app
-# 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa 的头文件和库
 COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
-RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig 
+# 确保构建阶段有 g++
+RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
 
 COPY . .
 RUN rustup target add x86_64-unknown-linux-musl
 
-# 设置 .cargo/config.toml 指定 g++ 作为链接器并设置基础静态链接标志
-# 期望 OPENCC_DYLIB_STDCPP=1 会让 build.rs 添加 -lstdc++，然后 g++ -static 会处理它
+# 设置 .cargo/config.toml 指定 g++ 作为链接器并使用强制静态链接参数
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-musl]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
-    echo 'rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]' >> .cargo/config.toml
+    # *** 修改：应用用户提供的详细 rustflags ***
+    echo 'rustflags = [' >> .cargo/config.toml && \
+    echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-Wl,--whole-archive", "-C", "link-arg=-lstdc++", "-C", "link-arg=-Wl,--no-whole-archive",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-Wl,--whole-archive", "-C", "link-arg=-lgcc", "-C", "link-arg=-Wl,--no-whole-archive",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-Wl,--whole-archive", "-C", "link-arg=-lgcc_eh", "-C", "link-arg=-Wl,--no-whole-archive",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lpthread" # 添加 pthread，C++ std::thread 等功能可能需要它' >> .cargo/config.toml && \
+    echo ']' >> .cargo/config.toml
 
 # 再次设置环境变量，确保它们在 cargo build 阶段也生效
 ENV OPENCC_STATIC=1
@@ -113,10 +121,9 @@ ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
 ENV OPENCC_DYLIB_STDCPP=1
 
-ENV PKG_CONFIG_ALLOW_CROSS=1 
-ENV OPENSSL_STATIC=1 
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
 RUN cargo build --target x86_64-unknown-linux-musl --bin crslab_comments_reptile --verbose
 RUN mv target/x86_64-unknown-linux-musl/debug/crslab_comments_reptile /crslab_comments_reptile_debug_final
-
