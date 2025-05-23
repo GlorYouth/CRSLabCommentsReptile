@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1.4
-# 使用 Arch Linux 基础镜像尝试构建完全静态链接的 DEBUG 版本
-# 更新：使用最新的 OpenCC 和 Marisa-trie 版本
+# 使用 Arch Linux 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 DEBUG 版本
 
-# --- OpenCC 和 Marisa 版本 (更新为最新) ---
+# --- OpenCC 和 Marisa 版本 ---
 ARG OPENCC_VERSION=1.1.9
 ARG MARISA_VERSION=0.2.7
 
@@ -12,19 +11,16 @@ ARG OPENCC_VERSION
 ARG MARISA_VERSION
 WORKDIR /opt
 
-# 更新 Arch Linux 包数据库并安装基础编译工具和依赖
-# 'base-devel' 包含 gcc, make 等。
+# 安装编译依赖
 RUN pacman -Syu --noconfirm \
     base-devel \
     cmake \
     wget \
     python \
     git \
-    # autoconf automake libtool 通常是 base-devel 的一部分或可单独安装
     autoconf \
     automake \
     libtool && \
-    # 清理 pacman 缓存
     pacman -Scc --noconfirm
 
 # 下载、编译并安装 Marisa-trie
@@ -32,8 +28,7 @@ RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSI
     tar xzf marisa.tar.gz && \
     cd marisa-trie-${MARISA_VERSION} && \
     autoreconf -i && \
-    # 注意：在 Glibc 环境下，--enable-static --disable-shared 仍然适用
-    LDFLAGS="-static" ./configure --prefix=/usr/local --enable-static --disable-shared && \
+    ./configure --prefix=/usr/local --enable-static --disable-shared && \
     make -j$(nproc) && \
     make install && \
     cd .. && rm -rf marisa-trie-${MARISA_VERSION} marisa.tar.gz
@@ -43,11 +38,8 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
     tar xzf opencc.tar.gz && \
     rm opencc.tar.gz
 
-# 进入源码目录并尝试修复头文件问题
-# 然后编译并安装 OpenCC 静态库
+# 进入源码目录并尝试修复头文件问题, 然后编译并安装 OpenCC 静态库
 RUN cd OpenCC-ver.${OPENCC_VERSION} && \
-    # 在可能出错的文件顶部添加 #include <cstdint>
-    # 您可能需要根据实际报错的文件列表调整这里
     echo "Attempting to patch OpenCC source files..." && \
     if [ -f src/SerializedValues.hpp ]; then \
         sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.hpp && \
@@ -57,15 +49,10 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
         sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.cpp && \
         echo "Patched src/SerializedValues.cpp"; \
     fi && \
-    # （如果其他文件也报类似错误，继续在这里添加 sed 命令）
-    # 例如：
-    # if [ -f src/AnotherFile.hpp ]; then \
-    #     sed -i '1s/^/#include <cstdint>\n/' src/AnotherFile.hpp && \
-    #     echo "Patched src/AnotherFile.hpp"; \
-    # fi && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
+        # 确保启用了 Marisa 支持
         -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
@@ -76,7 +63,6 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
 FROM archlinux:latest AS chef
 WORKDIR /app
 
-# 安装基础编译工具、OpenSSL 和 curl (用于下载 rustup-init)
 RUN pacman -Syu --noconfirm \
     base-devel \
     openssl \
@@ -85,15 +71,11 @@ RUN pacman -Syu --noconfirm \
     git && \
     pacman -Scc --noconfirm
 
-# 安装 Rust 工具链使用官方脚本，并确保 PATH 更新
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
-    # 使用完整路径调用 rustup
     /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
-    # 将 cargo bin 目录永久添加到 root 用户的 PATH (对于后续 RUN 可能无效，但对交互式会话有用)
     echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc
 
-# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
 
 RUN cargo install cargo-chef --locked
@@ -103,24 +85,19 @@ RUN cargo chef prepare --recipe-path recipe.json
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
 FROM archlinux:latest AS planner
 WORKDIR /app
-# 确保 Rust 工具链在 PATH 中
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
-# 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
 COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
 
-# 安装编译依赖 (确保此阶段也有)
 RUN pacman -Syu --noconfirm \
     base-devel \
     openssl \
     pkgconf && \
     pacman -Scc --noconfirm
 
-# 确保 rustup 能找到并使用默认工具链
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (planner stage) ---"; \
         /root/.cargo/bin/rustup show; \
@@ -132,40 +109,31 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
-# 设置 opencc-rust crate 所需的环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-# 尝试让 build.rs 处理 libstdc++
-# ENV OPENCC_DYLIB_STDCPP=1
+# 重新启用 OPENCC_DYLIB_STDCPP，期望 build.rs 声明对 stdc++ 的依赖
+ENV OPENCC_DYLIB_STDCPP=1 
 
-# 尝试静态链接 OpenSSL
 ENV OPENSSL_STATIC=1
-# 对于 Glibc 下的完全静态链接，RUSTFLAGS 会非常关键
-# 尝试静态链接C运行时
-ENV RUSTFLAGS="-C target-feature=+crt-static"
+# C 运行时在这里不需要强制静态，因为我们接受动态链接 Glibc
+# ENV RUSTFLAGS="-C target-feature=+crt-static" # 移除或调整
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-# 提示 pkg-config 寻找静态库
-ENV PKG_CONFIG_ALL_STATIC=1
+# 仍然可以提示 pkg-config 优先静态库，如果可用
+ENV PKG_CONFIG_ALL_STATIC=1 
 
 RUN cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Debug 模式)
 FROM archlinux:latest AS builder
 WORKDIR /app
-# 确保 Rust 工具链在 PATH 中
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
-# 复制 cargo 和 rustc
 COPY --from=planner /root/.cargo /root/.cargo
-# 如果 cargo-chef 在此阶段也需要（通常不需要构建主应用）
-# COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
 
-# 安装编译依赖 (确保此阶段也有)
 RUN pacman -Syu --noconfirm \
     base-devel \
     openssl \
@@ -174,15 +142,11 @@ RUN pacman -Syu --noconfirm \
 
 COPY . .
 
-# RUN rustup target add x86_64-unknown-linux-gnu # 这一行可以移到 rustup default 之后或者保留，如果工具链已设置则无害
-
-# *** 新增：确保 rustup 在此阶段能找到并使用默认工具链 ***
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (builder stage) ---"; \
         /root/.cargo/bin/rustup show; \
         echo "Setting default toolchain to stable..."; \
         /root/.cargo/bin/rustup default stable; \
-        # 再次添加 target (如果需要且默认工具链可能没有它)
         /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu; \
         echo "--- End Rustup Info ---"; \
     else \
@@ -194,40 +158,43 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
-    # *** 修改：简化 rustflags，更依赖 g++ -static 的行为，并确保 -no-pie ***
+    # *** 修改：调整 rustflags 以实现“尽可能静态链接”，但接受 Glibc 动态链接 ***
     echo 'rustflags = [' >> .cargo/config.toml && \
-    echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-no-pie",' >> .cargo/config.toml && \
-    # 以下库由 g++ -static 应该自动处理，但如果仍然缺少，可以考虑重新加入
-    # echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && # -static 通常已包含此意图
-    # echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml &&
-    # echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml &&
-    # echo '  "-C", "link-arg=-lgcc_eh",' >> .cargo/config.toml &&
-    # echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml &&
+    # 对于 Glibc 目标，+crt-static 尝试静态链接 C 运行时，但通常不完全可行或不推荐
+    # 如果我们的目标是动态链接 Glibc，可以移除或调整此项
+    # echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && 
+    echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
+    # 显式静态链接我们关心的 C++ 库和 OpenCC/Marisa/OpenSSL 依赖的库
+    echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lgcc_eh",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
+    # openssl 静态链接时可能需要 -ldl
+    echo '  "-C", "link-arg=-ldl",' >> .cargo/config.toml && \
+    # 在此之后，允许链接器为那些必须动态链接的库（如 Glibc 的某些部分）切换回动态链接
+    echo '  "-C", "link-arg=-Wl,-Bdynamic"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
-
-# 再次设置环境变量
+# 环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-# ENV OPENCC_DYLIB_STDCPP=1
+# 重新启用 OPENCC_DYLIB_STDCPP，期望 build.rs 声明对 stdc++ 的依赖
+ENV OPENCC_DYLIB_STDCPP=1 
 
-# 虽然不是交叉编译，但有时有用
 ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
 
 RUN cargo build --target x86_64-unknown-linux-gnu --bin crslab_comments_reptile --verbose
-RUN mv target/x86_64-unknown-linux-gnu/debug/deps/crslab_comments_reptile /crslab_comments_reptile_debug_glibc_static_attempt
+RUN mv target/x86_64-unknown-linux-gnu/debug/deps/crslab_comments_reptile /crslab_comments_reptile_debug_glibc_partial_static
 
-# 最终阶段：从一个干净的 scratch 或 alpine 镜像开始，只复制二进制文件
-# 但如果目标是 Glibc 完全静态，它可能仍然只在 Glibc 系统上运行
+# 最终阶段：可以使用一个包含基础 Glibc 的最小镜像，或者直接从 builder 阶段获取
+# 这里我们仍然使用 scratch 来看看 ldd 的结果，但它可能无法运行
+# 更实际的做法可能是 FROM archlinux:base-devel AS final 然后只复制二进制文件
 FROM scratch
-COPY --from=builder /crslab_comments_reptile_debug_glibc_static_attempt /crslab_comments_reptile_debug
+COPY --from=builder /crslab_comments_reptile_debug_glibc_partial_static /crslab_comments_reptile_debug
 ENTRYPOINT ["/crslab_comments_reptile_debug"]
