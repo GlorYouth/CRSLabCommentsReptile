@@ -15,7 +15,7 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
     rm opencc.tar.gz
 RUN cd OpenCC-${OPENCC_VERSION} && \
     cmake . \
-        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
         -DENABLE_GTEST=OFF \
         -DENABLE_BENCHMARK=OFF \
