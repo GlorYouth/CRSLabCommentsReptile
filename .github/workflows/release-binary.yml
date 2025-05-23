@@ -58,15 +58,15 @@ jobs:
           # 从临时容器中将构建好的二进制文件复制到运行器文件系统
           # 注意：这里的 /crslab-comment-sreptile_final 是 Dockerfile 中最终二进制文件的路径
           # 如果 Dockerfile 中 mv 命令的目标路径是 /crslab_comments_reptile_final，这里也要对应修改
-          docker cp temp_crslab-comment-sreptile_builder:/crslab_comments_reptile_final ./crslab_comments_reptile_linux_musl
+          docker cp temp_crslab-comment-sreptile_builder:/crslab_comments_reptile_final ./crslab-comments-reptile
           # 删除临时容器
           docker rm temp_crslab-comment-sreptile_builder
 
           # 打印二进制文件成功提取的日志信息，并列出文件详情和类型
-          # 注意：这里的文件名 crslab_comments_reptile_linux_musl 应与上面 docker cp 的目标文件名一致
-          echo "Binary 'crslab_comments_reptile_linux_musl' successfully extracted."
-          ls -l ./crslab_comments_reptile_linux_musl
-          file ./crslab_comments_reptile_linux_musl
+          # 注意：这里的文件名 crslab-comments-reptile 应与上面 docker cp 的目标文件名一致
+          echo "Binary 'crslab-comments-reptile' successfully extracted."
+          ls -l ./crslab-comments-reptile
+          file ./crslab-comments-reptile
 
       # 第三个步骤：创建 GitHub Release
       - name: Create GitHub Release
@@ -95,8 +95,7 @@ jobs:
             - ... (Add your specific release notes here. You can refer to Git commits between the last release and this tag if desired.)
 
             ### Download:
-            # 注意：这里的文件名应与后续上传的 asset_name 保持一致或相关
-            - `crslab_comments_reptile-linux-musl-${{ github.event.inputs.tag }}` (Linux, x86_64, statically linked with musl)
+            - `crslab-comments-reptile` (Linux, x86_64, statically linked with musl)
         # 'env' 关键字用于设置环境变量
         env:
           # GITHUB_TOKEN 是一个特殊的 secret，用于授权 action 代表您与 GitHub API 交互
@@ -110,8 +109,8 @@ jobs:
           # 上传 URL，从上一步 'create_release' 的输出中获取
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           # 要上传的文件的路径，指向从 Docker 中提取出来的二进制文件
-          # 注意：这里的文件名 crslab_comments_reptile_linux_musl 应与之前 docker cp 的目标文件名一致
-          asset_path: ./crslab_comments_reptile_linux_musl
+          # 注意：这里的文件名 crslab-comments-reptile 应与之前 docker cp 的目标文件名一致
+          asset_path: ./crslab-comments-reptile
           # 上传后在 Release 页面显示的文件名
           # 注意：这个名称应与 Release body 中描述的下载文件名一致
           asset_name: crslab_comments_reptile-linux-musl-${{ github.event.inputs.tag }}
