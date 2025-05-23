@@ -113,7 +113,7 @@ jobs:
           asset_path: ./crslab-comments-reptile
           # 上传后在 Release 页面显示的文件名
           # 注意：这个名称应与 Release body 中描述的下载文件名一致
-          asset_name: crslab_comments_reptile-linux-musl-${{ github.event.inputs.tag }}
+          asset_name: crslab-comments-reptile
           # 文件的 MIME 类型
           asset_content_type: application/octet-stream
         env:
