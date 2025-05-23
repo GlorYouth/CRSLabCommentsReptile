@@ -72,8 +72,10 @@ RUN rustup target add x86_64-unknown-linux-musl
 
 # 设置 RUSTFLAGS 以进行完全静态链接（为清晰起见，重复但安全，针对应用程序编译）
 ENV RUSTFLAGS="-C target-feature=+crt-static"
-ENV PKG_CONFIG_ALLOW_CROSS=1 # 通常用于交叉编译场景，musl构建有时也需要
-ENV OPENSSL_STATIC=1         # 确保 OpenSSL 静态链接
+# 通常用于交叉编译场景，musl构建有时也需要
+ENV PKG_CONFIG_ALLOW_CROSS=1
+# 确保 OpenSSL 静态链接
+ENV OPENSSL_STATIC=1
 
 # 编译您的 Rust 应用程序的 release 版本，使用 musl 目标
 # 根据您的仓库，二进制文件名为 crslabcommentsreptile
