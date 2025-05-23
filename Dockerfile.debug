@@ -19,14 +19,11 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
 # 编译并安装 OpenCC 静态库
 # BUILD_SHARED_LIBS=OFF 是关键
 # CMAKE_INSTALL_PREFIX=/usr/local 使其安装到标准位置
-# *** 修复：将 cd OpenCC-${OPENCC_VERSION} 修改为 cd OpenCC-ver.${OPENCC_VERSION} ***
+# *** 调整：移除了 ENABLE_GTEST, ENABLE_BENCHMARK, ENABLE_DARTS 参数，以应对 Debug 模式下可能的兼容性问题 ***
 RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
-        -DCMAKE_BUILD_TYPE=Debug \ # 注意：这里可以是 Debug 或 Release，取决于是否也想调试 OpenCC 本身
+        -DCMAKE_BUILD_TYPE=Debug \ # OpenCC 自身的构建类型也设为 Debug
         -DBUILD_SHARED_LIBS=OFF \
-        -DENABLE_GTEST=OFF \
-        -DENABLE_BENCHMARK=OFF \
-        -DENABLE_DARTS=OFF \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install
