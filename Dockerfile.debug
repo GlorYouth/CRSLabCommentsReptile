@@ -82,11 +82,13 @@ RUN cargo chef prepare --recipe-path recipe.json
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
 FROM archlinux:latest AS planner
 WORKDIR /app
-ENV PATH="/root/.cargo/bin:${PATH}" # 确保 Rust 工具链在 PATH 中
+# 确保 Rust 工具链在 PATH 中
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
-COPY --from=chef /root/.cargo /root/.cargo # 复制 rustup 安装的 cargo 和 rustc
+# 复制 rustup 安装的 cargo 和 rustc
+COPY --from=chef /root/.cargo /root/.cargo
 COPY --from=chef /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
 
@@ -102,27 +104,33 @@ ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-ENV OPENCC_DYLIB_STDCPP=1 # 尝试让 build.rs 处理 libstdc++
+# 尝试让 build.rs 处理 libstdc++
+ENV OPENCC_DYLIB_STDCPP=1
 
 ENV OPENSSL_STATIC=1 # 尝试静态链接 OpenSSL
 # 对于 Glibc 下的完全静态链接，RUSTFLAGS 会非常关键
 # LDFLAGS="-static" 可能需要在编译 C/C++ 依赖时也设置
-ENV RUSTFLAGS="-C target-feature=+crt-static" # 尝试静态链接C运行时
+# 尝试静态链接C运行时
+ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-ENV PKG_CONFIG_ALL_STATIC=1 # 提示 pkg-config 寻找静态库
+# 提示 pkg-config 寻找静态库
+ENV PKG_CONFIG_ALL_STATIC=1
 
 RUN cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Debug 模式)
 FROM archlinux:latest AS builder
 WORKDIR /app
-ENV PATH="/root/.cargo/bin:${PATH}" # 确保 Rust 工具链在 PATH 中
+# 确保 Rust 工具链在 PATH 中
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
-COPY --from=planner /root/.cargo /root/.cargo # 复制 cargo 和 rustc
-COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef # 如果需要
+# 复制 cargo 和 rustc
+COPY --from=planner /root/.cargo /root/.cargo
+# 如果需要
+COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
 
 # 安装编译依赖 (确保此阶段也有)
 RUN pacman -Syu --noconfirm \
@@ -158,7 +166,8 @@ ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
 ENV OPENCC_DYLIB_STDCPP=1
 
-ENV PKG_CONFIG_ALLOW_CROSS=1 # 虽然不是交叉编译，但有时有用
+# 虽然不是交叉编译，但有时有用
+ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
