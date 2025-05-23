@@ -90,7 +90,8 @@ RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
 # 阶段 3: 构建应用程序本身 (Debug 模式)
 FROM rust:alpine AS builder
 WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local # 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa
+COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig 
