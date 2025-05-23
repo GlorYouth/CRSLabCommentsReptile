@@ -157,7 +157,8 @@ RUN mkdir -p .cargo && \
     # echo '  "-C", "link-arg=-static-libstdc++",' >> .cargo/config.toml && \
     # echo '  "-C", "link-arg=-static-libgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread"' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && # 有时静态链接也需要 dl
+    # 有时静态链接也需要 dl
+    echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
 # 再次设置环境变量
