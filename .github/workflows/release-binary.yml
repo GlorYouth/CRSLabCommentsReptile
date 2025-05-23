@@ -55,7 +55,7 @@ jobs:
           echo "Extracting Release binary from Docker container..."
           mkdir -p ./output
           docker create --name temp_builder_release crslab-builder-release
-          docker cp temp_builder_release:/crslab_comments_reptile_final ./output/${asset_name}
+          docker cp temp_builder_release:/crslab_comments_reptile ./output/${asset_name}
           docker rm temp_builder_release
 
           echo "Release binary './output/${asset_name}' successfully extracted."
@@ -163,20 +163,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
-          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile (${{ steps.build_params.outputs.build_type_description_for_display }})
+          name: Release ${{ github.event.inputs.tag }}
           draft: ${{ github.event.inputs.draft }}
           prerelease: ${{ github.event.inputs.prerelease }}
           body: |
-            # Release ${{ github.event.inputs.tag }} (${{ steps.build_params.outputs.build_type_description_for_display }})
+            ## CRSLab Comments Reptile (${{ steps.build_params.outputs.build_type_description_for_display }})
 
-            这是 **CRSLab Comments Reptile** 的一个新版本，针对 Linux (musl) 进行了完全静态构建。
+            这是 **CRSLab Comments Reptile** 的一个新版本，针对 Linux 进行了大部分静态构建。
 
             ## 此版本中的功能/更改:
             - 通过 GitHub Actions workflow_dispatch 手动构建。
             - 构建类型: ${{ steps.build_params.outputs.build_type_description_for_display }}.
             - 包含 `opencc` (静态链接) 和 `openssl` (静态链接) 依赖。
             - 小型、静态链接的可执行文件，具有高可移植性。
-            - ... (在此处添加您的特定发行说明。)
 
             ### 下载:
             ${{ (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success' && format('- `{0}` (Linux, x86_64, musl 静态链接, 发布版本)', steps.build_params.outputs.release_asset_name) || '' }}
