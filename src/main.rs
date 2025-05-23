@@ -481,7 +481,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut handles = Vec::new(); // 用于存储所有任务的句柄
 
     // 遍历解析到的数据
-    for (key_from_json, entity_id) in data.into_iter().take(5) {
+    for (key_from_json, entity_id) in data.into_iter() {
         // 处理所有条目
 
         let resource_name = {
@@ -529,7 +529,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         };
-        println!("resource_name: {}",resource_name);
 
         // 为每个任务克隆 tx (Sender)、client 和 semaphore
         let tx_clone = tx.clone();
