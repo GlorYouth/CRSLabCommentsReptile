@@ -138,7 +138,7 @@ ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
 # 尝试让 build.rs 处理 libstdc++
-ENV OPENCC_DYLIB_STDCPP=1
+# ENV OPENCC_DYLIB_STDCPP=1
 
 # 尝试静态链接 OpenSSL
 ENV OPENSSL_STATIC=1
@@ -199,6 +199,12 @@ RUN mkdir -p .cargo && \
     echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lgcc_eh",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-ldl",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-no-pie"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
@@ -208,7 +214,7 @@ ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-ENV OPENCC_DYLIB_STDCPP=1
+# ENV OPENCC_DYLIB_STDCPP=1
 
 # 虽然不是交叉编译，但有时有用
 ENV PKG_CONFIG_ALLOW_CROSS=1
