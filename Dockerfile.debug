@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.4
 # 使用 Arch Linux 基础镜像尝试构建完全静态链接的 DEBUG 版本
+# 更新：使用最新的 OpenCC 和 Marisa-trie 版本
 
-# --- OpenCC 和 Marisa 版本 (与之前保持一致) ---
-ARG OPENCC_VERSION=1.1.7
+# --- OpenCC 和 Marisa 版本 (更新为最新) ---
+ARG OPENCC_VERSION=1.1.9
 ARG MARISA_VERSION=0.2.7
 
 # 阶段 0: 在 Arch Linux 上构建 OpenCC 和 Marisa-trie 静态库
@@ -13,7 +14,6 @@ WORKDIR /opt
 
 # 更新 Arch Linux 包数据库并安装基础编译工具和依赖
 # 'base-devel' 包含 gcc, make 等。
-# 需要确保安装了静态库版本的 glibc, libstdc++ 等 (这在 Arch 上可能需要特定包或已默认包含)
 RUN pacman -Syu --noconfirm \
     base-devel \
     cmake \
@@ -39,6 +39,7 @@ RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSI
     cd .. && rm -rf marisa-trie-${MARISA_VERSION} marisa.tar.gz
 
 # 下载、编译并安装 OpenCC
+# 注意 OpenCC 的标签格式是 ver.X.Y.Z
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
     tar xzf opencc.tar.gz && \
     cd OpenCC-ver.${OPENCC_VERSION} && \
@@ -66,15 +67,12 @@ RUN pacman -Syu --noconfirm \
     pacman -Scc --noconfirm
 
 # 安装 Rust 工具链使用官方脚本，并确保 PATH 更新
-# 将 rustup 安装、PATH 设置、以及 rustup target add 放在同一个 RUN 指令中
-# 以确保 PATH 在后续命令中生效
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
-    # rustup-init 脚本会自动将 /root/.cargo/bin 添加到 PATH，但通常只对新的 shell 会话生效
-    # 所以我们在这里显式使用完整路径来调用 rustup，或者确保 ENV PATH 已更新并被此 RUN 指令的 shell 会话采纳
-    # 为了保险起见，后续的 rustup 调用也使用完整路径
+    # 使用完整路径调用 rustup
     /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
-    echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc # 或者 /etc/profile.d/rustup.sh
+    # 将 cargo bin 目录永久添加到 root 用户的 PATH (对于后续 RUN 可能无效，但对交互式会话有用)
+    echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc
 
 # 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
@@ -114,7 +112,6 @@ ENV OPENCC_DYLIB_STDCPP=1
 # 尝试静态链接 OpenSSL
 ENV OPENSSL_STATIC=1
 # 对于 Glibc 下的完全静态链接，RUSTFLAGS 会非常关键
-# LDFLAGS="-static" 可能需要在编译 C/C++ 依赖时也设置
 # 尝试静态链接C运行时
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
@@ -135,7 +132,7 @@ COPY --from=planner /app/target target
 # 复制 cargo 和 rustc
 COPY --from=planner /root/.cargo /root/.cargo
 # 如果需要
-COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
+# COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef # cargo-chef 在此阶段通常不需要
 
 # 安装编译依赖 (确保此阶段也有)
 RUN pacman -Syu --noconfirm \
@@ -151,17 +148,11 @@ COPY . .
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
-    # 尝试让 g++ 进行全面静态链接，这在 Glibc 系统上可能导致问题，但符合“完全静态编译”的尝试
-    # Glibc 自身很多部分不希望被完全静态链接，尤其是 nss 等
-    # 更稳妥的做法可能是静态链接所有能静态链接的，然后接受对基础 glibc 的动态链接
-    # 但既然目标是“完全静态”，我们先尝试最强的选项
+    # 尝试让 g++ 进行全面静态链接
     echo 'rustflags = [' >> .cargo/config.toml && \
     echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
-    # echo '  "-C", "link-arg=-static-libstdc++",' >> .cargo/config.toml && \
-    # echo '  "-C", "link-arg=-static-libgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
-    # 有时静态链接也需要 dl
     echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
