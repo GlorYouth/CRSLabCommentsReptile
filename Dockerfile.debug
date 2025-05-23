@@ -61,8 +61,8 @@ RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
 COPY . .
 RUN rustup target add x86_64-unknown-linux-musl
 
-# *** 修改：在 RUSTFLAGS 中添加 -static-libstdc++ 以静态链接 C++ 标准库 ***
-ENV RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libstdc++"
+# *** 修改：在 RUSTFLAGS 中同时添加 -static-libgcc 和 -static-libstdc++ ***
+ENV RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-static-libstdc++"
 ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
 ENV OPENCC_STATIC=1
