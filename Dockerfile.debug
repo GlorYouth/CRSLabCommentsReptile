@@ -1,14 +1,9 @@
 # syntax=docker/dockerfile:1.4
 # 使用 Debian 10 (Slim) 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 DEBUG 版本
 
-# --- OpenCC 和 Marisa 版本 ---
-ARG OPENCC_VERSION=1.1.9
-ARG MARISA_VERSION=0.2.7
 
 # 阶段 0: 在 Debian 10 上构建 OpenCC 和 Marisa-trie 静态库 (Debug 模式)
 FROM debian:10-slim AS opencc_builder
-ARG OPENCC_VERSION
-ARG MARISA_VERSION
 WORKDIR /opt
 
 # 设置 DEBIAN_FRONTEND 为非交互式
@@ -27,41 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 下载、编译并安装 Marisa-trie
-RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSION}.tar.gz -O marisa.tar.gz && \
-    tar xzf marisa.tar.gz && \
-    cd marisa-trie-${MARISA_VERSION} && \
-    autoreconf -i && \
-    ./configure --prefix=/usr/local --enable-static --disable-shared && \
-    make -j$(nproc) && \
-    make install && \
-    cd .. && rm -rf marisa-trie-${MARISA_VERSION} marisa.tar.gz
-
-# 下载 OpenCC 源码
-RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
-    tar xzf opencc.tar.gz && \
-    rm opencc.tar.gz
-
-# 进入源码目录并尝试修复头文件问题, 然后编译并安装 OpenCC 静态库 (Debug 模式)
-RUN cd OpenCC-ver.${OPENCC_VERSION} && \
-    echo "Attempting to patch OpenCC source files..." && \
-    if [ -f src/SerializedValues.hpp ]; then \
-        sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.hpp && \
-        echo "Patched src/SerializedValues.hpp"; \
-    fi && \
-    if [ -f src/SerializedValues.cpp ]; then \
-        sed -i '1s/^/#include <cstdint>\n/' src/SerializedValues.cpp && \
-        echo "Patched src/SerializedValues.cpp"; \
-    fi && \
-    cmake . \
-        -DCMAKE_BUILD_TYPE=Debug \
-        -DBUILD_SHARED_LIBS=OFF \
-        # 确保启用了 Marisa 支持
-        -DENABLE_MARISA=ON \
-        -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j$(nproc) && \
-    make install && \
-    cd .. && rm -rf OpenCC-ver.${OPENCC_VERSION}
 
 # 阶段 1: Rust 环境准备和依赖编译 (cargo-chef) - 基于 Debian 10 Slim
 FROM debian:10-slim AS chef
@@ -117,13 +77,6 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
-ENV OPENCC_STATIC=1
-ENV OPENCC_LIB_DIRS=/usr/local/lib
-ENV OPENCC_LIBS=opencc:marisa
-ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-ENV OPENCC_DYLIB_STDCPP=1 
-
-ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1 
 
