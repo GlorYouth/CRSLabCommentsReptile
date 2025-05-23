@@ -1,75 +1,70 @@
 # syntax=docker/dockerfile:1.4
-# Dockerfile for building the crslabcommentsreptile Rust application with musl target
+# 用于使用 musl 目标构建 crslabcommentsreptile Rust 应用程序的 Dockerfile
 
-# Stage 1: Build dependencies (using cargo-chef for optimization)
-# Use the specified Rust Alpine base image
+# 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
+# 使用指定的 Rust Alpine 基础镜像
 FROM rust:alpine AS chef
 WORKDIR /app
 
-# Install musl-dev, build-base (for C/C++ compiler),
-# opencc-dev (for OpenCC headers/libs), and openssl-dev (for OpenSSL headers/libs)
+# 安装 musl-dev、build-base（用于 C/C++ 编译器）、
+# opencc-dev（用于 OpenCC 头文件/库）和 openssl-dev（用于 OpenSSL 头文件/库）
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 
-# --- 新增步骤：安装 cargo-chef ---
+# 安装 cargo-chef 工具
 RUN cargo install cargo-chef --locked
-# --- 新增步骤结束 ---
 
-# Copy Cargo.toml and Cargo.lock to leverage Docker layer caching for dependencies
-COPY Cargo.toml Cargo.lock ./
+# --- 重要更改：在运行 cargo chef prepare 之前，复制整个项目源代码 ---
+# 这确保了 cargo-chef 可以访问到 src/main.rs 等文件来分析 Cargo.toml
+COPY . .
+# --- 更改结束 ---
 
-# Use cargo-chef to prepare the build recipe (dependency hash)
+# 使用 cargo-chef 准备构建食谱（依赖项哈希）
+# 此步骤需要访问 Cargo.toml 和所有源文件，以确定正确的依赖图
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Stage 2: Build all dependencies
+# 阶段 2: 构建所有依赖项
 FROM rust:alpine AS planner
 WORKDIR /app
+# 只从 chef 阶段复制生成的食谱文件
 COPY --from=chef /app/recipe.json recipe.json
-# Re-install dependencies in this stage to ensure they are available
+# 在此阶段重新安装依赖项，以确保它们可用
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 
-# Add the x86_64-unknown-linux-musl target
+# 添加 x86_64-unknown-linux-musl 目标
 RUN rustup target add x86_64-unknown-linux-musl
 
-# Set RUSTFLAGS for fully static linking.
-# openssl-sys crate might require pkg-config for finding libraries.
-# Also explicitly linking with -lssl -lcrypto can be needed for openssl-sys
-# Check if you use system OpenSSL or rustls. If rustls, this might not be needed.
-# If you use openssl-sys and link system openssl, you might need to adjust:
-# ENV PKG_CONFIG_ALLOW_CROSS=1 # might be needed for cross-compiling with pkg-config
-
- # Forces openssl-sys to link statically
+# 设置 RUSTFLAGS 以进行完全静态链接。
+# 强制 openssl-sys 静态链接
 ENV OPENSSL_STATIC=1
-# ENV OPENSSL_DIR=/usr # Points openssl-sys to standard Alpine lib paths
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
-# Cook (build) the dependencies for release with musl target
+# 构建依赖项的 release 版本，使用 musl 目标
 RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
-# Stage 3: Build the application itself
+# 阶段 3: 构建应用程序本身
 FROM rust:alpine AS builder
 WORKDIR /app
-# Copy built dependencies and cargo registry cache from planner stage
+# 从 planner 阶段复制已构建的依赖项和 cargo 注册表缓存
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
-# Re-install dependencies in this stage to ensure they are available
+# 在此阶段重新安装依赖项，以确保它们可用
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 
-# Copy your application source code
+# 复制您的应用程序源代码（这会使此层在源代码更改时失效，以重新编译应用程序）
 COPY . .
 
-# Add the x86_64-unknown-linux-musl target (redundant but safe for clarity)
+# 添加 x86_64-unknown-linux-musl 目标（为清晰起见，重复但安全）
 RUN rustup target add x86_64-unknown-linux-musl
 
-# Set RUSTFLAGS for fully static linking (redundant but safe for clarity)
+# 设置 RUSTFLAGS 以进行完全静态链接（为清晰起见，重复但安全）
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
-# ENV OPENSSL_DIR=/usr/lib/ssl # Or /usr, depending on how openssl-dev places files
 
-# Compile your Rust application for release with musl target
-# The binary name is crslabcommentsreptile as per your repository
+# 编译您的 Rust 应用程序的 release 版本，使用 musl 目标
+# 根据您的仓库，二进制文件名为 crslabcommentsreptile
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslabcommentsreptile
 
-# Copy the final binary to a well-known location for easy extraction
-# This binary will be found at /crslabcommentsreptile_final inside the builder container
+# 将最终二进制文件移动到一个已知位置，以便轻松提取
+# 此二进制文件将在 builder 容器内部的 /crslabcommentsreptile_final 找到
 RUN mv target/x86_64-unknown-linux-musl/release/crslabcommentsreptile /crslabcommentsreptile_final
