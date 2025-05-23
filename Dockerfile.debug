@@ -72,12 +72,15 @@ RUN rustup target add x86_64-unknown-linux-musl
 # 设置 opencc-rust crate 所需的环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
-ENV OPENCC_LIBS=opencc:marisa # 明确链接 opencc 和 marisa
+# 明确链接 opencc 和 marisa
+ENV OPENCC_LIBS=opencc:marisa
 ENV OPENCC_INCLUDE_DIRS=/usr/local/include
-ENV OPENCC_DYLIB_STDCPP=1 # 关键：指示 build.rs 处理 libstdc++ 的链接
-
-ENV OPENSSL_STATIC=1 # 保持 OpenSSL 静态链接
-ENV RUSTFLAGS="-C target-feature=+crt-static" # 基础静态链接标志 (主要影响 chef cook 阶段的依赖)
+# 关键：指示 build.rs 处理 libstdc++ 的链接
+ENV OPENCC_DYLIB_STDCPP=1
+# 保持 OpenSSL 静态链接
+ENV OPENSSL_STATIC=1
+# 基础静态链接标志 (主要影响 chef cook 阶段的依赖)
+ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
 RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
