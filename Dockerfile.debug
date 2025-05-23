@@ -162,8 +162,8 @@ COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
 # 复制 cargo 和 rustc
 COPY --from=planner /root/.cargo /root/.cargo
-# 如果需要
-# COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef # cargo-chef 在此阶段通常不需要
+# 如果 cargo-chef 在此阶段也需要（通常不需要构建主应用）
+# COPY --from=planner /usr/local/bin/cargo-chef /usr/local/bin/cargo-chef
 
 # 安装编译依赖 (确保此阶段也有)
 RUN pacman -Syu --noconfirm \
@@ -174,8 +174,23 @@ RUN pacman -Syu --noconfirm \
 
 COPY . .
 
+# RUN rustup target add x86_64-unknown-linux-gnu # 这一行可以移到 rustup default 之后或者保留，如果工具链已设置则无害
+
+# *** 新增：确保 rustup 在此阶段能找到并使用默认工具链 ***
+RUN if [ -f /root/.cargo/bin/rustup ]; then \
+        echo "--- Rustup Info (builder stage) ---"; \
+        /root/.cargo/bin/rustup show; \
+        echo "Setting default toolchain to stable..."; \
+        /root/.cargo/bin/rustup default stable; \
+        # 再次添加 target (如果需要且默认工具链可能没有它)
+        /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu; \
+        echo "--- End Rustup Info ---"; \
+    else \
+        echo "Error: Rustup not found in /root/.cargo/bin in builder stage!"; \
+        exit 1; \
+    fi
+
 # 设置 .cargo/config.toml 指定 g++ 作为链接器并使用强制静态链接参数
-# 对于 Arch (Glibc)，完全静态链接非常困难，通常不推荐，但我们尝试
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
