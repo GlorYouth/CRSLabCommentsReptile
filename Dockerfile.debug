@@ -5,7 +5,7 @@
 # --- OpenCC 版本 ---
 ARG OPENCC_VERSION=1.1.7
 
-# 阶段 0: 构建 OpenCC 静态库 (与 release 版本一致)
+# 阶段 0: 构建 OpenCC 静态库
 FROM alpine:3.18 AS opencc_builder
 ARG OPENCC_VERSION
 WORKDIR /opt
@@ -17,18 +17,11 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
     rm opencc.tar.gz
 
 # 编译并安装 OpenCC 静态库
-# BUILD_SHARED_LIBS=OFF 是关键
-# CMAKE_INSTALL_PREFIX=/usr/local 使其安装到标准位置
-# *** 调整：移除了 ENABLE_GTEST, ENABLE_BENCHMARK, ENABLE_DARTS 参数，以应对 Debug 模式下可能的兼容性问题 ***
 RUN cd OpenCC-ver.${OPENCC_VERSION} && \
-    \
-    # OpenCC 自身的构建类型也设为 Debug
     cmake . \
+        # OpenCC 自身的构建类型也设为 Debug (此注释必须在参数行的上方)
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
-        -DENABLE_GTEST=OFF \
-        -DENABLE_BENCHMARK=OFF \
-        -DENABLE_DARTS=OFF \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install
@@ -55,7 +48,6 @@ ENV OPENSSL_STATIC=1
 ENV OPENCC_STATIC=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-# 注意：移除了 --release 标志以构建 DEBUG 版本的依赖
 RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Debug 模式)
@@ -65,13 +57,16 @@ COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+
 COPY . .
 RUN rustup target add x86_64-unknown-linux-musl
-ENV RUSTFLAGS="-C target-feature=+crt-static"
+
+# *** 修改：在 RUSTFLAGS 中添加 -static-libstdc++ 以静态链接 C++ 标准库 ***
+ENV RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libstdc++"
 ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
 ENV OPENCC_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-# 注意：移除了 --release 标志以构建 DEBUG 版本的应用程序
+
 RUN cargo build --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
 RUN mv target/x86_64-unknown-linux-musl/debug/crslab_comments_reptile /crslab_comments_reptile_debug_final

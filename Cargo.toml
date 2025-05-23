@@ -1,6 +1,6 @@
 [package]
 name = "crslab_comments_reptile"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -10,6 +10,11 @@ tokio = { version = "1.45.0", features = ["full"] }
 scraper = "0.23.1"
 opencc-rust = "1.1.19"
 url = "2.5.4"
+
+[profile.dev]
+opt-level = "z"  # 优化大小 ("s" 也是一个选项)
+lto = true         # 启用链接时优化 (Link Time Optimization)
+codegen-units = 1  # 减少并行编译单元以启用更多优化
 
 [profile.release]
 opt-level = "z"  # 优化大小 ("s" 也是一个选项)
