@@ -1,34 +1,39 @@
 # syntax=docker/dockerfile:1.4
-# 使用 Arch Linux 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 RELEASE 版本
+# 使用 Debian 10 基础镜像，尝试最大程度静态链接非 Glibc 核心库的 RELEASE 版本
 
 # --- OpenCC 和 Marisa 版本 ---
 ARG OPENCC_VERSION=1.1.9
 ARG MARISA_VERSION=0.2.7
 
-# 阶段 0: 在 Arch Linux 上构建 OpenCC 和 Marisa-trie 静态库
-FROM archlinux:latest AS opencc_builder
+# 阶段 0: 在 Debian 10 上构建 OpenCC 和 Marisa-trie 静态库
+FROM debian:10-slim AS opencc_builder
 ARG OPENCC_VERSION
 ARG MARISA_VERSION
 WORKDIR /opt
 
+# 设置 DEBIAN_FRONTEND 为非交互式
+ENV DEBIAN_FRONTEND=noninteractive
+
 # 安装编译依赖
-RUN pacman -Syu --noconfirm \
-    base-devel \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     cmake \
     wget \
-    python \
+    python3 \
     git \
     autoconf \
     automake \
-    libtool && \
-    pacman -Scc --noconfirm
+    libtool \
+    # Marisa 可能需要 g++ (build-essential 已包含)
+    ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 下载、编译并安装 Marisa-trie
 RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSION}.tar.gz -O marisa.tar.gz && \
     tar xzf marisa.tar.gz && \
     cd marisa-trie-${MARISA_VERSION} && \
     autoreconf -i && \
-    # Marisa 正常编译静态库
+    # 移除 LDFLAGS="-static"，让 Marisa 正常编译静态库
     ./configure --prefix=/usr/local --enable-static --disable-shared && \
     make -j$(nproc) && \
     make install && \
@@ -51,7 +56,6 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
         echo "Patched src/SerializedValues.cpp"; \
     fi && \
     cmake . \
-        # *** 修改：将 CMAKE_BUILD_TYPE 设为 Release ***
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         # 确保启用了 Marisa 支持
@@ -62,22 +66,27 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cd .. && rm -rf OpenCC-ver.${OPENCC_VERSION}
 
 # 阶段 1: Rust 环境准备和依赖编译 (cargo-chef)
-FROM archlinux:latest AS chef
+FROM debian:10-slim AS chef
 WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN pacman -Syu --noconfirm \
-    base-devel \
-    openssl \
-    pkgconf \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    # libssl-dev 用于 OpenSSL 开发文件
+    libssl-dev \
+    # pkg-config 用于定位库
+    pkg-config \
     curl \
-    git && \
-    pacman -Scc --noconfirm
+    git \
+    ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
     /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
     echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc
 
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
 
 RUN cargo install cargo-chef --locked
@@ -85,20 +94,24 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Release 模式)
-FROM archlinux:latest AS planner
+FROM debian:10-slim AS planner
 WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
+# 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
 COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
 
-RUN pacman -Syu --noconfirm \
-    base-devel \
-    openssl \
-    pkgconf && \
-    pacman -Scc --noconfirm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    pkg-config \
+    ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN if [ -f /root/.cargo/bin/rustup ]; then \
         echo "--- Rustup Info (planner stage) ---"; \
@@ -111,6 +124,7 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
+# 设置环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
@@ -118,27 +132,31 @@ ENV OPENCC_INCLUDE_DIRS=/usr/local/include
 ENV OPENCC_DYLIB_STDCPP=1 
 
 ENV OPENSSL_STATIC=1
-# ENV RUSTFLAGS="-C target-feature=+crt-static" # 在 Glibc Release 构建中，此项通常不是必需的
+# ENV RUSTFLAGS="-C target-feature=+crt-static" # 在 Glibc Release 构建中通常不需要
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1 
 
-# *** 修改：为 cargo chef cook 添加 --release 标志 ***
+# 使用 --release 标志编译依赖
 RUN cargo chef cook --release --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Release 模式)
-FROM archlinux:latest AS builder
+FROM debian:10-slim AS builder
 WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=planner /app/target target
+# 复制 cargo 和 rustc
 COPY --from=planner /root/.cargo /root/.cargo
 
-RUN pacman -Syu --noconfirm \
-    base-devel \
-    openssl \
-    pkgconf && \
-    pacman -Scc --noconfirm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    pkg-config \
+    ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
@@ -154,12 +172,13 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
-# 设置 .cargo/config.toml (与 Debug 版本保持一致，因为链接策略相同)
+# 设置 .cargo/config.toml，实现“尽可能静态链接”，但接受 Glibc 核心动态链接
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
     echo 'rustflags = [' >> .cargo/config.toml && \
-    # echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && # 对于 Glibc Release，通常不需要
+    # 对于 Glibc 目标，通常不强制 +crt-static，因为我们会动态链接 Glibc
+    # echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && 
     echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml && \
@@ -167,10 +186,11 @@ RUN mkdir -p .cargo && \
     echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-ldl",' >> .cargo/config.toml && \
+    # 切换回动态链接，以允许 Glibc 核心库等动态链接
     echo '  "-C", "link-arg=-Wl,-Bdynamic"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
-# 环境变量 (与 Debug 版本保持一致)
+# 环境变量
 ENV OPENCC_STATIC=1
 ENV OPENCC_LIB_DIRS=/usr/local/lib
 ENV OPENCC_LIBS=opencc:marisa
@@ -182,15 +202,17 @@ ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
 
-# *** 修改：为 cargo build 添加 --release 标志 ***
+# 使用 --release 标志编译应用
 RUN cargo build --release --target x86_64-unknown-linux-gnu --bin crslab_comments_reptile --verbose
-# *** 修改：调整最终二进制文件的源路径和名称 ***
-RUN mv target/x86_64-unknown-linux-gnu/release/crslab_comments_reptile /crslab_comments_reptile
+# 移动到最终的 release 产物名称
+RUN mv target/x86_64-unknown-linux-gnu/release/crslab_comments_reptile /crslab_comments_reptile_final
 
-# 最终阶段：用于部署的最小镜像
-# 既然我们接受动态链接 Glibc，基础镜像应该是包含 Glibc 的
-# 例如：FROM archlinux:latest 或 debian:slim 等，而不是 scratch
-# 这里为了与您 Debug 版本的最终阶段保持一致，暂时保留 scratch，但请注意其运行限制
-# FROM scratch
-# COPY --from=builder /crslab_comments_reptile_final /crslab_comments_reptile
-# ENTRYPOINT ["/crslab_comments_reptile"]
+# 最终阶段：基于一个包含 Glibc 的最小 Debian 镜像
+FROM debian:10-slim AS final
+WORKDIR /app
+# 从构建阶段复制最终的二进制文件
+COPY --from=builder /crslab_comments_reptile_final /app/crslab_comments_reptile
+# 确保可执行权限
+RUN chmod +x /app/crslab_comments_reptile
+# 设置工作目录并指定入口点
+ENTRYPOINT ["/app/crslab_comments_reptile"]

@@ -55,7 +55,7 @@ jobs:
           echo "Extracting Release binary from Docker container..."
           mkdir -p ./output
           docker create --name temp_builder_release crslab-builder-release
-          docker cp temp_builder_release:/crslab_comments_reptile ./output/${asset_name}
+          docker cp temp_builder_release:/app/crslab_comments_reptile ./output/${asset_name}
           docker rm temp_builder_release
 
           echo "Release binary './output/${asset_name}' successfully extracted."
@@ -91,7 +91,7 @@ jobs:
           echo "Extracting Debug binary from Docker container..."
           mkdir -p ./output
           docker create --name temp_builder_debug crslab-builder-debug
-          docker cp temp_builder_debug:/crslab_comments_reptile_debug ./output/${asset_name}
+          docker cp temp_builder_debug:/app/crslab_comments_reptile ./output/${asset_name}
           docker rm temp_builder_debug
 
           echo "Debug binary './output/${asset_name}' successfully extracted."
