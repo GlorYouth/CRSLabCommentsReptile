@@ -10,6 +10,10 @@ WORKDIR /app
 # opencc-dev (for OpenCC headers/libs), and openssl-dev (for OpenSSL headers/libs)
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 
+# --- 新增步骤：安装 cargo-chef ---
+RUN cargo install cargo-chef --locked
+# --- 新增步骤结束 ---
+
 # Copy Cargo.toml and Cargo.lock to leverage Docker layer caching for dependencies
 COPY Cargo.toml Cargo.lock ./
 
@@ -32,7 +36,7 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Check if you use system OpenSSL or rustls. If rustls, this might not be needed.
 # If you use openssl-sys and link system openssl, you might need to adjust:
 # ENV PKG_CONFIG_ALLOW_CROSS=1 # might be needed for cross-compiling with pkg-config
-# ENV OPENSSL_STATIC=1 # Forces openssl-sys to link statically
+ENV OPENSSL_STATIC=1 # Forces openssl-sys to link statically
 # ENV OPENSSL_DIR=/usr # Points openssl-sys to standard Alpine lib paths
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
@@ -56,12 +60,8 @@ RUN rustup target add x86_64-unknown-linux-musl
 
 # Set RUSTFLAGS for fully static linking (redundant but safe for clarity)
 ENV RUSTFLAGS="-C target-feature=+crt-static"
-# If your project uses the `openssl` crate and it's linking against the system `openssl`,
-# you might need to specify library paths or other environment variables for cross-compilation.
-# This often depends on how the `openssl` crate is configured in your Cargo.toml.
-# For example, to ensure static linking for openssl-sys:
-# ENV PKG_CONFIG_ALLOW_CROSS=1
-# ENV OPENSSL_STATIC=1
+ENV PKG_CONFIG_ALLOW_CROSS=1
+ENV OPENSSL_STATIC=1
 # ENV OPENSSL_DIR=/usr/lib/ssl # Or /usr, depending on how openssl-dev places files
 
 # Compile your Rust application for release with musl target
