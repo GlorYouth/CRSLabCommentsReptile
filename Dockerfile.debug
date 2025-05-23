@@ -190,7 +190,7 @@ ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV PKG_CONFIG_ALL_STATIC=1
 
 RUN cargo build --target x86_64-unknown-linux-gnu --bin crslab_comments_reptile --verbose
-RUN mv target/x86_64-unknown-linux-gnu/debug/crslab_comments_reptile /crslab_comments_reptile_debug_glibc_partial_static
+RUN mv target/x86_64-unknown-linux-gnu/debug/crslab_comments_reptile /crslab_comments_reptile_debug
 
 # 最终阶段：可以使用一个包含基础 Glibc 的最小镜像，或者直接从 builder 阶段获取
 # 这里我们仍然使用 scratch 来看看 ldd 的结果，但它可能无法运行
