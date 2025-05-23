@@ -200,6 +200,7 @@ RUN mkdir -p .cargo && \
     echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-no-pie",' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
 
 # 再次设置环境变量
