@@ -195,6 +195,6 @@ RUN mv target/x86_64-unknown-linux-gnu/debug/crslab_comments_reptile /crslab_com
 # 最终阶段：可以使用一个包含基础 Glibc 的最小镜像，或者直接从 builder 阶段获取
 # 这里我们仍然使用 scratch 来看看 ldd 的结果，但它可能无法运行
 # 更实际的做法可能是 FROM archlinux:base-devel AS final 然后只复制二进制文件
-FROM scratch
-COPY --from=builder /crslab_comments_reptile_debug_glibc_partial_static /crslab_comments_reptile_debug
-ENTRYPOINT ["/crslab_comments_reptile_debug"]
+# FROM scratch
+# COPY --from=builder /crslab_comments_reptile_debug_glibc_partial_static /crslab_comments_reptile_debug
+# ENTRYPOINT ["/crslab_comments_reptile_debug"]

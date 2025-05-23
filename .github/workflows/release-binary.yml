@@ -91,7 +91,7 @@ jobs:
           echo "Extracting Debug binary from Docker container..."
           mkdir -p ./output
           docker create --name temp_builder_debug crslab-builder-debug
-          docker cp temp_builder_debug:/crslab_comments_reptile_debug_final ./output/${asset_name}
+          docker cp temp_builder_debug:/crslab_comments_reptile_debug ./output/${asset_name}
           docker rm temp_builder_debug
 
           echo "Debug binary './output/${asset_name}' successfully extracted."
