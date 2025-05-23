@@ -58,8 +58,8 @@ WORKDIR /app
 RUN pacman -Syu --noconfirm \
     rustup \
     base-devel \
-    openssl \ # Arch 通常会包含静态库，或有 openssl-static
-    pkgconf && \ # Arch 上的 pkg-config
+    openssl \
+    pkgconf && \
     pacman -Scc --noconfirm
 
 # 设置 Rust 工具链 (如果需要特定版本或组件)
