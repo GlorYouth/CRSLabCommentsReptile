@@ -8,11 +8,11 @@ WORKDIR /app
 
 # 安装 musl-dev, build-base（用于 C/C++ 编译器），
 # opencc-dev（用于 OpenCC 头文件/库），openssl-dev（用于 OpenSSL 头文件/库）
-# --- 新增：明确安装 gcc 和 g++，确保所有 C 编译工具链组件可用 ---
+# gcc 和 g++ 包含在 build-base 中，但明确列出也无妨，确保所有 C 编译工具链组件可用
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
-# --- 新增结束 ---
 
 # 安装 cargo-chef 工具
+# 这个 cargo-chef 是在 chef 阶段编译和安装的，没有应用最终应用程序的 RUSTFLAGS
 RUN cargo install cargo-chef --locked
 
 # 复制整个项目源代码，确保 cargo-chef 可以访问到 src/main.rs 等文件来分析 Cargo.toml
@@ -21,41 +21,48 @@ COPY . .
 # 使用 cargo-chef 准备构建食谱（依赖项哈希）
 RUN cargo chef prepare --recipe-path recipe.json
 
-# 阶段 2: 构建所有依赖项
+# 阶段 2: 构建所有依赖项 (使用 planner 阶段)
 FROM rust:alpine AS planner
 WORKDIR /app
+
+# --- 修改开始 ---
+# 从 chef 阶段复制已安装的 cargo-chef 可执行文件，而不是重新安装
+COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+# 确保复制过来的 cargo-chef 是可执行的
+RUN chmod +x /usr/local/bin/cargo-chef
+# --- 修改结束 ---
+
 # 从 chef 阶段复制生成的食谱文件
 COPY --from=chef /app/recipe.json recipe.json
 
-# 在 planner 阶段也安装 cargo-chef
-RUN cargo install cargo-chef --locked
-
-# 在此阶段重新安装依赖项，以确保它们可用
-# --- 新增：明确安装 gcc 和 g++ ---
+# 在 planner 阶段安装编译项目依赖所需的系统库
+# 这些是项目依赖编译时可能需要的，例如 openssl-dev, opencc-dev
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
-# --- 新增结束 ---
 
 # 添加 x86_64-unknown-linux-musl 目标
 RUN rustup target add x86_64-unknown-linux-musl
 
-# 设置 RUSTFLAGS 以进行完全静态链接。
+# 设置 RUSTFLAGS 以进行完全静态链接 (针对项目依赖的编译)
 # 强制 openssl-sys 静态链接
 ENV OPENSSL_STATIC=1
+# 这个 RUSTFLAGS 用于 cargo chef cook，即编译项目的依赖项
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
 # 构建依赖项的 release 版本，使用 musl 目标
+# cargo-chef cook 会使用上面设置的 RUSTFLAGS 和目标
 RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身
 FROM rust:alpine AS builder
 WORKDIR /app
+
 # 从 planner 阶段复制已构建的依赖项和 cargo 注册表缓存
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
-# 在此阶段重新安装依赖项，以确保它们可用
-# --- 新增：明确安装 gcc 和 g++ ---
+
+# 在 builder 阶段安装编译应用程序本身所需的系统库
+# 确保编译环境一致
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
-# --- 新增结束 ---
 
 # 复制您的应用程序源代码（这会使此层在源代码更改时失效，以重新编译应用程序）
 COPY . .
@@ -63,10 +70,10 @@ COPY . .
 # 添加 x86_64-unknown-linux-musl 目标（为清晰起见，重复但安全）
 RUN rustup target add x86_64-unknown-linux-musl
 
-# 设置 RUSTFLAGS 以进行完全静态链接（为清晰起见，重复但安全）
+# 设置 RUSTFLAGS 以进行完全静态链接（为清晰起见，重复但安全，针对应用程序编译）
 ENV RUSTFLAGS="-C target-feature=+crt-static"
-ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV OPENSSL_STATIC=1
+ENV PKG_CONFIG_ALLOW_CROSS=1 # 通常用于交叉编译场景，musl构建有时也需要
+ENV OPENSSL_STATIC=1         # 确保 OpenSSL 静态链接
 
 # 编译您的 Rust 应用程序的 release 版本，使用 musl 目标
 # 根据您的仓库，二进制文件名为 crslabcommentsreptile
@@ -75,3 +82,4 @@ RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslabcomment
 # 将最终二进制文件移动到一个已知位置，以便轻松提取
 # 此二进制文件将在 builder 容器内部的 /crslabcommentsreptile_final 找到
 RUN mv target/x86_64-unknown-linux-musl/release/crslabcommentsreptile /crslabcommentsreptile_final
+
