@@ -18,12 +18,12 @@ on:
           - both         # 同时构建 Release 和 Debug 版本
         default: 'release_only'
       prerelease:
-        description: 'Is this a pre-release?'
+        description: 'Is this a pre-release?' # 参数描述
         required: false
         type: boolean
         default: false
       draft:
-        description: 'Create as a draft release?'
+        description: 'Create as a draft release?' # 参数描述
         required: false
         type: boolean
         default: false
@@ -38,6 +38,9 @@ jobs:
       contents: read # 读取代码权限
     outputs:
       asset_name: crslab-comments-reptile # 定义输出，方便后续作业引用
+      # 定义一个输出，表示此构建是否被预期执行并成功
+      # 注意：此处的 success() 是作业级别的，如果作业被跳过，此输出可能不会按预期设置
+      # 我们将在 publish_release 作业中更可靠地判断
     steps:
       - name: Checkout code (检出代码)
         uses: actions/checkout@v4
@@ -46,6 +49,7 @@ jobs:
         run: |
           asset_name="crslab-comments-reptile"
           echo "Starting Docker build for Release version..."
+          # 假设 Dockerfile.release 存在于仓库根目录
           docker build -t crslab-builder-release -f Dockerfile.release .
 
           echo "Extracting Release binary from Docker container..."
@@ -81,6 +85,7 @@ jobs:
         run: |
           asset_name="crslab-comments-reptile-debug"
           echo "Starting Docker build for Debug version..."
+          # 假设 Dockerfile.debug 存在于仓库根目录
           docker build -t crslab-builder-debug -f Dockerfile.debug .
 
           echo "Extracting Debug binary from Docker container..."
@@ -102,11 +107,16 @@ jobs:
   publish_release:
     name: Create GitHub Release and Upload Assets (创建 GitHub Release 并上传资源)
     # 此作业依赖于 build_release 和 build_debug 作业
-    # needs 中的作业会先执行；即使某个 build 作业因为 if 条件不满足而跳过，
-    # publish_release 仍会尝试执行（因为 needs 只是依赖顺序，if 控制是否运行）
-    # 我们使用 always() 来确保此作业总是运行，以便它能处理各种情况（例如只构建一个版本）
     needs: [build_release, build_debug]
-    if: always() # 总是运行此作业，内部逻辑会处理条件上传
+    # *** 修改：核心条件判断 ***
+    # 只有在所有被触发的构建作业都成功时才运行 publish_release
+    # 或者，如果只选择构建一个版本，则该版本必须成功
+    if: |
+      always() && (
+        ( github.event.inputs.build_type == 'release_only' && needs.build_release.result == 'success' ) ||
+        ( github.event.inputs.build_type == 'debug_only' && needs.build_debug.result == 'success' ) ||
+        ( github.event.inputs.build_type == 'both' && needs.build_release.result == 'success' && needs.build_debug.result == 'success' )
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write # 创建 Release 和上传资源需要写权限
@@ -132,6 +142,7 @@ jobs:
 
       - name: Download Release Asset Artifact (下载 Release 版本构建物)
         # 仅当选择了 release_only 或 both，并且 build_release 作业成功时才下载
+        # (此处的 if 条件其实可以省略，因为 publish_release 作业的 if 条件已经保证了这一点)
         if: (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -140,6 +151,7 @@ jobs:
 
       - name: Download Debug Asset Artifact (下载 Debug 版本构建物)
         # 仅当选择了 debug_only 或 both，并且 build_debug 作业成功时才下载
+        # (此处的 if 条件其实可以省略)
         if: (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -170,10 +182,11 @@ jobs:
             ${{ (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success' && format('- `{0}` (Linux, x86_64, musl 静态链接, 发布版本)', steps.build_params.outputs.release_asset_name) || '' }}
             ${{ (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success' && format('- `{0}` (Linux, x86_64, musl 静态链接, 调试版本)', steps.build_params.outputs.debug_asset_name) || '' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 修正了 GITHU_TOKEN -> GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Release Asset (Release) (上传 Release 版本资源)
         # 仅当选择了 release_only 或 both，并且 build_release 作业成功时才上传
+        # (此处的 if 条件其实可以省略)
         if: (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success'
         uses: actions/upload-release-asset@v1
         with:
@@ -186,6 +199,7 @@ jobs:
 
       - name: Upload Debug Asset (Debug) (上传 Debug 版本资源)
         # 仅当选择了 debug_only 或 both，并且 build_debug 作业成功时才上传
+        # (此处的 if 条件其实可以省略)
         if: (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success'
         uses: actions/upload-release-asset@v1
         with:
