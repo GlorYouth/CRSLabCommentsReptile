@@ -3,7 +3,7 @@
 
 # --- OpenCC 和 Marisa 版本 (与之前保持一致) ---
 ARG OPENCC_VERSION=1.1.7
-ARG MARISA_VERSION=0.2.6
+ARG MARISA_VERSION=0.2.7
 
 # 阶段 0: 在 Arch Linux 上构建 OpenCC 和 Marisa-trie 静态库
 FROM archlinux:latest AS opencc_builder
