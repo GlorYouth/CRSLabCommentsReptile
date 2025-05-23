@@ -6,9 +6,11 @@
 FROM rust:alpine AS chef
 WORKDIR /app
 
-# 安装 musl-dev、build-base（用于 C/C++ 编译器）、
-# opencc-dev（用于 OpenCC 头文件/库）和 openssl-dev（用于 OpenSSL 头文件/库）
-RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
+# 安装 musl-dev, build-base（用于 C/C++ 编译器），
+# opencc-dev（用于 OpenCC 头文件/库），openssl-dev（用于 OpenSSL 头文件/库）
+# --- 新增：明确安装 gcc 和 g++，确保所有 C 编译工具链组件可用 ---
+RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
+# --- 新增结束 ---
 
 # 安装 cargo-chef 工具
 RUN cargo install cargo-chef --locked
@@ -25,12 +27,13 @@ WORKDIR /app
 # 从 chef 阶段复制生成的食谱文件
 COPY --from=chef /app/recipe.json recipe.json
 
-# --- 新增步骤：在 planner 阶段也安装 cargo-chef ---
+# 在 planner 阶段也安装 cargo-chef
 RUN cargo install cargo-chef --locked
-# --- 新增步骤结束 ---
 
 # 在此阶段重新安装依赖项，以确保它们可用
-RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
+# --- 新增：明确安装 gcc 和 g++ ---
+RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
+# --- 新增结束 ---
 
 # 添加 x86_64-unknown-linux-musl 目标
 RUN rustup target add x86_64-unknown-linux-musl
@@ -50,7 +53,9 @@ WORKDIR /app
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
 # 在此阶段重新安装依赖项，以确保它们可用
-RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
+# --- 新增：明确安装 gcc 和 g++ ---
+RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev gcc g++
+# --- 新增结束 ---
 
 # 复制您的应用程序源代码（这会使此层在源代码更改时失效，以重新编译应用程序）
 COPY . .
