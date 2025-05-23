@@ -53,7 +53,8 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
 # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
 FROM rust:alpine AS chef
 WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local # 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa
+COPY --from=opencc_builder /usr/local /usr/local
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
 RUN cargo install cargo-chef --locked
 COPY . .
@@ -62,7 +63,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
 FROM rust:alpine AS planner
 WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local # 复制 OpenCC 和 Marisa
+# 复制 OpenCC 和 Marisa
+COPY --from=opencc_builder /usr/local /usr/local
 COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 RUN chmod +x /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
