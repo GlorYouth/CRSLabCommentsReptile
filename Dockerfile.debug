@@ -21,10 +21,14 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
 # CMAKE_INSTALL_PREFIX=/usr/local 使其安装到标准位置
 # *** 调整：移除了 ENABLE_GTEST, ENABLE_BENCHMARK, ENABLE_DARTS 参数，以应对 Debug 模式下可能的兼容性问题 ***
 RUN cd OpenCC-ver.${OPENCC_VERSION} && \
+    \
+    # OpenCC 自身的构建类型也设为 Debug
     cmake . \
-        # OpenCC 自身的构建类型也设为 Debug
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
+        -DENABLE_GTEST=OFF \
+        -DENABLE_BENCHMARK=OFF \
+        -DENABLE_DARTS=OFF \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install
