@@ -13,20 +13,22 @@ RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 # 安装 cargo-chef 工具
 RUN cargo install cargo-chef --locked
 
-# --- 重要更改：在运行 cargo chef prepare 之前，复制整个项目源代码 ---
-# 这确保了 cargo-chef 可以访问到 src/main.rs 等文件来分析 Cargo.toml
+# 复制整个项目源代码，确保 cargo-chef 可以访问到 src/main.rs 等文件来分析 Cargo.toml
 COPY . .
-# --- 更改结束 ---
 
 # 使用 cargo-chef 准备构建食谱（依赖项哈希）
-# 此步骤需要访问 Cargo.toml 和所有源文件，以确定正确的依赖图
 RUN cargo chef prepare --recipe-path recipe.json
 
 # 阶段 2: 构建所有依赖项
 FROM rust:alpine AS planner
 WORKDIR /app
-# 只从 chef 阶段复制生成的食谱文件
+# 从 chef 阶段复制生成的食谱文件
 COPY --from=chef /app/recipe.json recipe.json
+
+# --- 新增步骤：在 planner 阶段也安装 cargo-chef ---
+RUN cargo install cargo-chef --locked
+# --- 新增步骤结束 ---
+
 # 在此阶段重新安装依赖项，以确保它们可用
 RUN apk add --no-cache musl-dev build-base opencc-dev openssl-dev
 
