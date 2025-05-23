@@ -32,6 +32,9 @@ jobs:
     # 'runs-on' 指定了作业将在哪种类型的运行器上执行
     runs-on: ubuntu-latest # 使用 GitHub 托管的最新版 Ubuntu 运行器
 
+    permissions: # <--- 添加这个 permissions 块
+      contents: write # <--- 授予对仓库内容（包括 Releases）的写权限
+    
     # 'steps' 定义了作业中要执行的一系列任务（步骤）
     steps:
       # 第一个步骤：检出代码
