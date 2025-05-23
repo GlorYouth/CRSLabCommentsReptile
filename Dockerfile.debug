@@ -9,13 +9,20 @@ ARG OPENCC_VERSION=1.1.7
 FROM alpine:3.18 AS opencc_builder
 ARG OPENCC_VERSION
 WORKDIR /opt
-RUN apk add --no-cache cmake make g++ util-linux
+RUN apk add --no-cache cmake make g++ util-linux wget
+
+# 下载 OpenCC 源码
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
     tar xzf opencc.tar.gz && \
     rm opencc.tar.gz
-RUN cd OpenCC-${OPENCC_VERSION} && \
+
+# 编译并安装 OpenCC 静态库
+# BUILD_SHARED_LIBS=OFF 是关键
+# CMAKE_INSTALL_PREFIX=/usr/local 使其安装到标准位置
+# *** 修复：将 cd OpenCC-${OPENCC_VERSION} 修改为 cd OpenCC-ver.${OPENCC_VERSION} ***
+RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
-        -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_BUILD_TYPE=Debug \ # 注意：这里可以是 Debug 或 Release，取决于是否也想调试 OpenCC 本身
         -DBUILD_SHARED_LIBS=OFF \
         -DENABLE_GTEST=OFF \
         -DENABLE_BENCHMARK=OFF \

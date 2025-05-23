@@ -15,7 +15,8 @@ RUN apk add --no-cache \
     cmake \
     make \
     g++ \
-    util-linux # 提供 more, 用于检查文件
+    util-linux \
+    wget # 添加 wget
 
 # 下载 OpenCC 源码
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
@@ -25,7 +26,8 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
 # 编译并安装 OpenCC 静态库
 # BUILD_SHARED_LIBS=OFF 是关键
 # CMAKE_BUILD_TYPE=Release 用于 Release 构建
-RUN cd OpenCC-${OPENCC_VERSION} && \
+# *** 修复：将 cd OpenCC-${OPENCC_VERSION} 修改为 cd OpenCC-ver.${OPENCC_VERSION} ***
+RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
