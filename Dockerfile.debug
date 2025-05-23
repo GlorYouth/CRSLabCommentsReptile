@@ -110,8 +110,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY --from=opencc_builder /usr/local /usr/local
 # 复制 rustup 安装的 cargo 和 rustc
 COPY --from=chef /root/.cargo /root/.cargo
-# *** 修改：修正 cargo-chef 的源路径 ***
-COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef 
+COPY --from=chef /root/.cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
 
 # 安装编译依赖 (确保此阶段也有)
@@ -120,6 +119,18 @@ RUN pacman -Syu --noconfirm \
     openssl \
     pkgconf && \
     pacman -Scc --noconfirm
+
+# 确保 rustup 能找到并使用默认工具链
+RUN if [ -f /root/.cargo/bin/rustup ]; then \
+        echo "--- Rustup Info (planner stage) ---"; \
+        /root/.cargo/bin/rustup show; \
+        echo "Setting default toolchain to stable..."; \
+        /root/.cargo/bin/rustup default stable; \
+        echo "--- End Rustup Info ---"; \
+    else \
+        echo "Error: Rustup not found in /root/.cargo/bin in planner stage!"; \
+        exit 1; \
+    fi
 
 # 设置 opencc-rust crate 所需的环境变量
 ENV OPENCC_STATIC=1
