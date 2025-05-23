@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1.4
+# Dockerfile for building the crslabcommentsreptile Rust application with musl target
+
+# Stage 1: Build dependencies (using cargo-chef for optimization)
+# Use a Rust Alpine base image, which comes with musl libc
+FROM rust:latest-alpine AS chef
+WORKDIR /app
+
+# Install musl-dev and other build essentials for static linking
+# build-base includes gcc, g++, make, libc-dev etc. which are often needed
+RUN apk add --no-cache musl-dev build-base
+
+# Copy Cargo.toml and Cargo.lock to leverage Docker layer caching for dependencies
+COPY Cargo.toml Cargo.lock ./
+
+# Use cargo-chef to prepare the build recipe (dependency hash)
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: Build all dependencies
+FROM rust:latest-alpine AS planner
+WORKDIR /app
+COPY --from=chef /app/recipe.json recipe.json
+RUN apk add --no-cache musl-dev build-base # Ensure these are available in this stage too
+
+# Add the x86_64-unknown-linux-musl target
+RUN rustup target add x86_64-unknown-linux-musl
+
+# Set RUSTFLAGS for fully static linking
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+
+# Cook (build) the dependencies for release with musl target
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
+
+# Stage 3: Build the application itself
+FROM rust:latest-alpine AS builder
+WORKDIR /app
+
+# Copy built dependencies and cargo registry cache from planner stage
+COPY --from=planner /app/target target
+COPY --from=planner /usr/local/cargo /usr/local/cargo
+RUN apk add --no-cache musl-dev build-base # Ensure these are available in this stage too
+
+# Copy your application source code
+COPY . .
+
+# Add the x86_64-unknown-linux-musl target (redundant but safe)
+RUN rustup target add x86_64-unknown-linux-musl
+
+# Set RUSTFLAGS for fully static linking (redundant but safe)
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+
+# Compile your Rust application for release with musl target
+# The binary name is crslabcommentsreptile as per your repository
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslabcommentsreptile
+
+# Copy the final binary to a well-known location for easy extraction
+# This binary will be found at /crslabcommentsreptile_final inside the builder container
+RUN mv target/x86_64-unknown-linux-musl/release/crslabcommentsreptile /crslabcommentsreptile_final
