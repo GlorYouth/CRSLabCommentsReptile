@@ -1,55 +1,85 @@
+# 工作流程的名称，将显示在 GitHub Actions UI 中
 name: Build and Release Rust Binary (Manual Trigger)
 
+# 'on' 关键字定义了触发此工作流程的事件
 on:
+  # 'workflow_dispatch' 允许手动触发此工作流程
   workflow_dispatch:
+    # 'inputs' 定义了手动触发时可以提供的参数
     inputs:
+      # 'tag' 输入参数：用于发布的 Git 标签
       tag:
-        description: 'Git Tag for the Release (e.g., v1.0.0)'
-        required: true
-        type: string
+        description: 'Git Tag for the Release (e.g., v1.0.0)' # 参数描述
+        required: true # 此参数是必需的
+        type: string # 参数类型为字符串
+      # 'prerelease' 输入参数：标记是否为预发布版本
       prerelease:
-        description: 'Is this a pre-release?'
-        required: false
-        type: boolean
-        default: false
+        description: 'Is this a pre-release?' # 参数描述
+        required: false # 此参数是可选的
+        type: boolean # 参数类型为布尔值
+        default: false # 默认值为 false
+      # 'draft' 输入参数：标记是否创建为草稿版本
       draft:
-        description: 'Create as a draft release?'
-        required: false
-        type: boolean
-        default: false
+        description: 'Create as a draft release?' # 参数描述
+        required: false # 此参数是可选的
+        type: boolean # 参数类型为布尔值
+        default: false # 默认值为 false
 
+# 'jobs' 定义了工作流程中要执行的一个或多个作业
 jobs:
+  # 作业的唯一标识符，可以自定义
   build_and_upload_release_asset:
-    runs-on: ubuntu-latest
+    # 'runs-on' 指定了作业将在哪种类型的运行器上执行
+    runs-on: ubuntu-latest # 使用 GitHub 托管的最新版 Ubuntu 运行器
 
+    # 'steps' 定义了作业中要执行的一系列任务（步骤）
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # 第一个步骤：检出代码
+      - name: Checkout code # 步骤的名称，将显示在 GitHub Actions UI 中
+        uses: actions/checkout@v4 # 使用官方的 'checkout' action 来检出仓库代码，版本为 v4
 
+      # 第二个步骤：在 Docker 中构建 Rust 二进制文件 (使用 Alpine Musl)
       - name: Build Rust binary in Docker (Alpine Musl)
+        # 'run' 关键字允许执行命令行脚本
         run: |
-          echo "Starting Docker build for crslabcommentsreptile..."
-          docker build -t crslabcommentsreptile-musl-builder -f Dockerfile.release .
+          # 打印开始构建的日志信息
+          echo "Starting Docker build for CRSLabCommentSreptile..."
+          # 使用 Dockerfile.release 构建 Docker 镜像，并标记为 CRSLabCommentSreptile-musl-builder
+          # 注意：这里的 CRSLabCommentSreptile 应该是您项目/二进制文件的名称，如果之前有修改，这里也可能需要对应调整
+          docker build -t CRSLabCommentSreptile-musl-builder -f Dockerfile.release .
 
+          # 打印从 Docker 容器提取二进制文件的日志信息
           echo "Extracting binary from Docker container..."
-          docker create --name temp_crslabcommentsreptile_builder crslabcommentsreptile-musl-builder
-          docker cp temp_crslabcommentsreptile_builder:/crslabcommentsreptile_final ./crslabcommentsreptile_linux_musl
-          docker rm temp_crslabcommentsreptile_builder
+          # 创建一个临时 Docker 容器（基于刚构建的镜像），但不启动它
+          docker create --name temp_CRSLabCommentSreptile_builder CRSLabCommentSreptile-musl-builder
+          # 从临时容器中将构建好的二进制文件复制到运行器文件系统
+          # 注意：这里的 /CRSLabCommentSreptile_final 是 Dockerfile 中最终二进制文件的路径
+          # 如果 Dockerfile 中 mv 命令的目标路径是 /crslab_comments_reptile_final，这里也要对应修改
+          docker cp temp_CRSLabCommentSreptile_builder:/crslab_comments_reptile_final ./crslab_comments_reptile_linux_musl
+          # 删除临时容器
+          docker rm temp_CRSLabCommentSreptile_builder
 
-          echo "Binary 'crslabcommentsreptile_linux_musl' successfully extracted."
-          ls -l ./crslabcommentsreptile_linux_musl
-          file ./crslabcommentsreptile_linux_musl
+          # 打印二进制文件成功提取的日志信息，并列出文件详情和类型
+          # 注意：这里的文件名 crslab_comments_reptile_linux_musl 应与上面 docker cp 的目标文件名一致
+          echo "Binary 'crslab_comments_reptile_linux_musl' successfully extracted."
+          ls -l ./crslab_comments_reptile_linux_musl
+          file ./crslab_comments_reptile_linux_musl
 
+      # 第三个步骤：创建 GitHub Release
       - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v2
+        id: create_release # 给这个步骤一个 ID，方便后续步骤引用其输出
+        uses: softprops/action-gh-release@v2 # 使用 'softprops/action-gh-release' action 来创建 Release，版本为 v2
+        # 'with' 关键字用于向 action 传递参数
         with:
-          # 使用手动输入的 tag
+          # 使用手动触发时输入的 'tag' 作为 Release 的标签名
           tag_name: ${{ github.event.inputs.tag }}
+          # Release 的名称，结合了输入的标签和项目名
           name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile
-          # 使用手动输入的 draft 和 prerelease
+          # 使用手动触发时输入的 'draft' 值
           draft: ${{ github.event.inputs.draft }}
+          # 使用手动触发时输入的 'prerelease' 值
           prerelease: ${{ github.event.inputs.prerelease }}
+          # Release 的正文内容，支持 Markdown 格式
           body: |
             # Release ${{ github.event.inputs.tag }}
 
@@ -62,17 +92,27 @@ jobs:
             - ... (Add your specific release notes here. You can refer to Git commits between the last release and this tag if desired.)
 
             ### Download:
-            - `crslabcommentsreptile-linux-musl-${{ github.event.inputs.tag }}` (Linux, x86_64, statically linked with musl)
+            # 注意：这里的文件名应与后续上传的 asset_name 保持一致或相关
+            - `crslab_comments_reptile-linux-musl-${{ github.event.inputs.tag }}` (Linux, x86_64, statically linked with musl)
+        # 'env' 关键字用于设置环境变量
         env:
+          # GITHUB_TOKEN 是一个特殊的 secret，用于授权 action 代表您与 GitHub API 交互
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 第四个步骤：上传 Release Asset (构建的二进制文件)
       - name: Upload Release Asset
-        id: upload_asset
-        uses: actions/upload-release-asset@v1
+        id: upload_asset # 给这个步骤一个 ID
+        uses: actions/upload-release-asset@v1 # 使用官方的 'upload-release-asset' action 来上传文件，版本为 v1
         with:
+          # 上传 URL，从上一步 'create_release' 的输出中获取
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./crslabcommentsreptile_linux_musl
-          asset_name: crslabcommentsreptile-linux-musl-${{ github.event.inputs.tag }}
+          # 要上传的文件的路径，指向从 Docker 中提取出来的二进制文件
+          # 注意：这里的文件名 crslab_comments_reptile_linux_musl 应与之前 docker cp 的目标文件名一致
+          asset_path: ./crslab_comments_reptile_linux_musl
+          # 上传后在 Release 页面显示的文件名
+          # 注意：这个名称应与 Release body 中描述的下载文件名一致
+          asset_name: crslab_comments_reptile-linux-musl-${{ github.event.inputs.tag }}
+          # 文件的 MIME 类型
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
