@@ -1,22 +1,39 @@
 # syntax=docker/dockerfile:1.4
-# 用于使用 musl 目标构建 crslab_comments_reptile Rust 应用程序的 RELEASE 版本的 Dockerfile
-# 此版本会从源码编译 OpenCC 以实现静态链接
+# 用于构建 crslab_comments_reptile Rust 应用程序 RELEASE 版本的 Dockerfile (使用 musl 目标)
+# 此版本会从源码编译 OpenCC (及其依赖 Marisa) 以实现静态链接，
+# 并主要通过 opencc-rust crate 的环境变量来指导链接。
 
-# --- OpenCC 版本 ---
+# --- OpenCC 和 Marisa 版本 ---
 ARG OPENCC_VERSION=1.1.7
+ARG MARISA_VERSION=0.2.6 # Marisa-trie 版本
 
-# 阶段 0: 构建 OpenCC 静态库
+# 阶段 0: 构建 OpenCC 和 Marisa-trie 静态库
 FROM alpine:3.18 AS opencc_builder
 ARG OPENCC_VERSION
+ARG MARISA_VERSION
 WORKDIR /opt
 
-# 安装 OpenCC 编译依赖
+# 安装编译依赖
 RUN apk add --no-cache \
     cmake \
     make \
     g++ \
     util-linux \
-    wget # 添加 wget
+    wget \
+    python3 \
+    autoconf \
+    automake \
+    libtool # Marisa-trie 需要 autotools
+
+# 下载、编译并安装 Marisa-trie (OpenCC 的依赖)
+RUN wget https://github.com/s-yata/marisa-trie/archive/refs/tags/v${MARISA_VERSION}.tar.gz -O marisa.tar.gz && \
+    tar xzf marisa.tar.gz && \
+    cd marisa-trie-${MARISA_VERSION} && \
+    autoreconf -i && \
+    ./configure --prefix=/usr/local --enable-static --disable-shared && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && rm -rf marisa-trie-${MARISA_VERSION} marisa.tar.gz
 
 # 下载 OpenCC 源码
 RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
@@ -24,16 +41,12 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
     rm opencc.tar.gz
 
 # 编译并安装 OpenCC 静态库
-# BUILD_SHARED_LIBS=OFF 是关键
-# CMAKE_BUILD_TYPE=Release 用于 Release 构建
-# *** 修复：将 cd OpenCC-${OPENCC_VERSION} 修改为 cd OpenCC-ver.${OPENCC_VERSION} ***
+# *** 修改：将 CMAKE_BUILD_TYPE 设为 Release ***
 RUN cd OpenCC-ver.${OPENCC_VERSION} && \
     cmake . \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
-        -DENABLE_GTEST=OFF \
-        -DENABLE_BENCHMARK=OFF \
-        -DENABLE_DARTS=OFF \
+        -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install
@@ -41,76 +54,72 @@ RUN cd OpenCC-ver.${OPENCC_VERSION} && \
 # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
 FROM rust:alpine AS chef
 WORKDIR /app
-
-# 从 opencc_builder 阶段复制静态编译的 OpenCC 库和头文件
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
-
-# 安装编译所需的系统依赖
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-
-# 安装 cargo-chef 工具
 RUN cargo install cargo-chef --locked
-
-# 复制整个项目源代码
 COPY . .
-
-# 使用 cargo-chef 准备构建食谱（依赖项哈希）
 RUN cargo chef prepare --recipe-path recipe.json
 
-# 阶段 2: 构建所有依赖项 (使用 planner 阶段 - Release 模式)
+# 阶段 2: 构建所有依赖项 (planner 阶段 - Release 模式)
 FROM rust:alpine AS planner
 WORKDIR /app
-
-# 从 opencc_builder 阶段复制静态编译的 OpenCC
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
-# 从 chef 阶段复制已安装的 cargo-chef 可执行文件和配方文件
 COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
 RUN chmod +x /usr/local/bin/cargo-chef
 COPY --from=chef /app/recipe.json recipe.json
-
-# 安装编译项目依赖所需的系统库
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-
-# 添加 x86_64-unknown-linux-musl 目标
 RUN rustup target add x86_64-unknown-linux-musl
 
-# 设置环境变量以进行静态链接
+# 设置 opencc-rust crate 所需的环境变量
+ENV OPENCC_STATIC=1
+ENV OPENCC_LIB_DIRS=/usr/local/lib
+# 明确链接 opencc 和 marisa
+ENV OPENCC_LIBS=opencc:marisa
+ENV OPENCC_INCLUDE_DIRS=/usr/local/include
+# 关键：指示 build.rs 处理 libstdc++ 的链接
+ENV OPENCC_DYLIB_STDCPP=1
+# 保持 OpenSSL 静态链接
 ENV OPENSSL_STATIC=1
-ENV OPENCC_STATIC=1 
+# 基础静态链接标志 (主要影响 chef cook 阶段的依赖)
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
-# 构建依赖项的 RELEASE 版本，使用 musl 目标
+# *** 修改：为 cargo chef cook 添加 --release 标志 ***
 RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 
 # 阶段 3: 构建应用程序本身 (Release 模式)
 FROM rust:alpine AS builder
 WORKDIR /app
-
-# 从 opencc_builder 阶段复制静态编译的 OpenCC
+# 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
-# 从 planner 阶段复制已构建的依赖项和 cargo 缓存
 COPY --from=planner /app/target target
 COPY --from=planner /usr/local/cargo /usr/local/cargo
-
-# 安装编译应用程序本身所需的系统库
 RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
 
-# 复制您的应用程序源代码
 COPY . .
-
-# 添加 x86_64-unknown-linux-musl 目标
 RUN rustup target add x86_64-unknown-linux-musl
 
-# 设置环境变量以进行静态链接
-ENV RUSTFLAGS="-C target-feature=+crt-static"
-ENV PKG_CONFIG_ALLOW_CROSS=1 
+# 设置 .cargo/config.toml 指定 g++ 作为链接器并设置基础静态链接标志
+# 期望 OPENCC_DYLIB_STDCPP=1 会让 build.rs 添加 -lstdc++，然后 g++ -static 会处理它
+RUN mkdir -p .cargo && \
+    echo '[target.x86_64-unknown-linux-musl]' > .cargo/config.toml && \
+    echo 'linker = "g++"' >> .cargo/config.toml && \
+    echo 'rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]' >> .cargo/config.toml
+
+# 再次设置环境变量，确保它们在 cargo build 阶段也生效
+ENV OPENCC_STATIC=1
+ENV OPENCC_LIB_DIRS=/usr/local/lib
+ENV OPENCC_LIBS=opencc:marisa
+ENV OPENCC_INCLUDE_DIRS=/usr/local/include
+ENV OPENCC_DYLIB_STDCPP=1
+
+ENV PKG_CONFIG_ALLOW_CROSS=1
 ENV OPENSSL_STATIC=1
-ENV OPENCC_STATIC=1 
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
 
-# 编译您的 Rust 应用程序的 RELEASE 版本，使用 musl 目标
-RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
-
-# 将最终二进制文件移动到一个已知位置
+# *** 修改：为 cargo build 添加 --release 标志 ***
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin crslab_comments_reptile --verbose
+# *** 修改：调整最终二进制文件的源路径和名称 ***
 RUN mv target/x86_64-unknown-linux-musl/release/crslab_comments_reptile /crslab_comments_reptile_final

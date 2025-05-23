@@ -6,8 +6,8 @@ on:
     inputs:
       tag:
         description: 'Git Tag for the Release (e.g., v1.0.0)' # 参数描述
-        required: true 
-        type: string 
+        required: true
+        type: string
       build_type: # 新的输入参数，用于选择构建类型
         description: 'Type of build to perform (构建类型选择)'
         required: true
@@ -18,40 +18,107 @@ on:
           - both         # 同时构建 Release 和 Debug 版本
         default: 'release_only'
       prerelease:
-        description: 'Is this a pre-release?' 
-        required: false 
-        type: boolean 
-        default: false 
+        description: 'Is this a pre-release?'
+        required: false
+        type: boolean
+        default: false
       draft:
-        description: 'Create as a draft release?' 
-        required: false 
-        type: boolean 
-        default: false 
+        description: 'Create as a draft release?'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  build_and_upload_release_asset:
+  build_release:
+    name: Build Release Version (构建 Release 版本)
+    # 仅当选择 'release_only' 或 'both' 时运行此作业
+    if: github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both'
     runs-on: ubuntu-latest
     permissions:
-      contents: write 
-    
-    outputs: # 定义作业输出，方便后续步骤（如果需要跨作业）或调试
-      release_asset_name: ${{ steps.prepare_filenames.outputs.release_asset_name }}
-      debug_asset_name: ${{ steps.prepare_filenames.outputs.debug_asset_name }}
-      release_built: ${{ steps.build_release.outcome == 'success' }}
-      debug_built: ${{ steps.build_debug.outcome == 'success' }}
-
+      contents: read # 读取代码权限
+    outputs:
+      asset_name: crslab-comments-reptile # 定义输出，方便后续作业引用
     steps:
       - name: Checkout code (检出代码)
         uses: actions/checkout@v4
 
-      - name: Prepare filenames and build descriptions (准备文件名和构建描述)
-        id: prepare_filenames
+      - name: Build Release Docker Image & Extract Binary (构建 Release Docker 镜像并提取二进制文件)
         run: |
-          release_asset_base="crslab-comments-reptile"
-          debug_asset_base="crslab-comments-reptile-debug"
-          
-          echo "release_asset_name=${release_asset_base}" >> $GITHUB_OUTPUT
-          echo "debug_asset_name=${debug_asset_base}" >> $GITHUB_OUTPUT
+          asset_name="crslab-comments-reptile"
+          echo "Starting Docker build for Release version..."
+          docker build -t crslab-builder-release -f Dockerfile.release .
+
+          echo "Extracting Release binary from Docker container..."
+          mkdir -p ./output
+          docker create --name temp_builder_release crslab-builder-release
+          docker cp temp_builder_release:/crslab_comments_reptile_final ./output/${asset_name}
+          docker rm temp_builder_release
+
+          echo "Release binary './output/${asset_name}' successfully extracted."
+          ls -l ./output/${asset_name}
+          file ./output/${asset_name}
+
+      - name: Upload Release Asset Artifact (上传 Release 版本构建物)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset # 构建物的名称
+          path: ./output/crslab-comments-reptile # 要上传的文件的路径
+
+  build_debug:
+    name: Build Debug Version (构建 Debug 版本)
+    # 仅当选择 'debug_only' 或 'both' 时运行此作业
+    if: github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # 读取代码权限
+    outputs:
+      asset_name: crslab-comments-reptile-debug # 定义输出
+    steps:
+      - name: Checkout code (检出代码)
+        uses: actions/checkout@v4
+
+      - name: Build Debug Docker Image & Extract Binary (构建 Debug Docker 镜像并提取二进制文件)
+        run: |
+          asset_name="crslab-comments-reptile-debug"
+          echo "Starting Docker build for Debug version..."
+          docker build -t crslab-builder-debug -f Dockerfile.debug .
+
+          echo "Extracting Debug binary from Docker container..."
+          mkdir -p ./output
+          docker create --name temp_builder_debug crslab-builder-debug
+          docker cp temp_builder_debug:/crslab_comments_reptile_debug_final ./output/${asset_name}
+          docker rm temp_builder_debug
+
+          echo "Debug binary './output/${asset_name}' successfully extracted."
+          ls -l ./output/${asset_name}
+          file ./output/${asset_name}
+
+      - name: Upload Debug Asset Artifact (上传 Debug 版本构建物)
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-asset # 构建物的名称
+          path: ./output/crslab-comments-reptile-debug # 要上传的文件的路径
+
+  publish_release:
+    name: Create GitHub Release and Upload Assets (创建 GitHub Release 并上传资源)
+    # 此作业依赖于 build_release 和 build_debug 作业
+    # needs 中的作业会先执行；即使某个 build 作业因为 if 条件不满足而跳过，
+    # publish_release 仍会尝试执行（因为 needs 只是依赖顺序，if 控制是否运行）
+    # 我们使用 always() 来确保此作业总是运行，以便它能处理各种情况（例如只构建一个版本）
+    needs: [build_release, build_debug]
+    if: always() # 总是运行此作业，内部逻辑会处理条件上传
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 Release 和上传资源需要写权限
+
+    steps:
+      - name: Determine build description (确定构建描述)
+        id: build_params
+        run: |
+          release_asset_name="crslab-comments-reptile"
+          debug_asset_name="crslab-comments-reptile-debug"
+          echo "release_asset_name=${release_asset_name}" >> $GITHUB_OUTPUT
+          echo "debug_asset_name=${debug_asset_name}" >> $GITHUB_OUTPUT
 
           build_desc=""
           if [[ "${{ github.event.inputs.build_type }}" == "release_only" ]]; then
@@ -61,93 +128,70 @@ jobs:
           elif [[ "${{ github.event.inputs.build_type }}" == "both" ]]; then
             build_desc="发布和调试版本 (Release and Debug Builds)"
           fi
-          echo "build_type_description=${build_desc}" >> $GITHUB_ENV
-          echo "BUILD_TYPE_DESCRIPTION_FOR_RELEASE_NAME=${build_desc}" >> $GITHUB_OUTPUT
+          echo "build_type_description_for_display=${build_desc}" >> $GITHUB_OUTPUT
 
+      - name: Download Release Asset Artifact (下载 Release 版本构建物)
+        # 仅当选择了 release_only 或 both，并且 build_release 作业成功时才下载
+        if: (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-asset
+          path: ./release_asset_dir # 下载到指定目录
 
-      # --- 构建 Release 版本 (条件执行) ---
-      - name: Build Release Version (构建 Release 版本)
-        id: build_release
-        if: github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both'
-        run: |
-          echo "Starting Docker build for Release version..."
-          docker build -t crslab-builder-release -f Dockerfile.release .
-          
-          echo "Extracting Release binary from Docker container..."
-          docker create --name temp_builder_release crslab-builder-release
-          docker cp temp_builder_release:/crslab_comments_reptile_final ./${{ steps.prepare_filenames.outputs.release_asset_name }}
-          docker rm temp_builder_release
-          
-          echo "Release binary '${{ steps.prepare_filenames.outputs.release_asset_name }}' successfully extracted."
-          ls -l ./${{ steps.prepare_filenames.outputs.release_asset_name }}
-          file ./${{ steps.prepare_filenames.outputs.release_asset_name }}
+      - name: Download Debug Asset Artifact (下载 Debug 版本构建物)
+        # 仅当选择了 debug_only 或 both，并且 build_debug 作业成功时才下载
+        if: (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: debug-asset
+          path: ./debug_asset_dir # 下载到指定目录
 
-      # --- 构建 Debug 版本 (条件执行) ---
-      - name: Build Debug Version (构建 Debug 版本)
-        id: build_debug
-        if: github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both'
-        run: |
-          echo "Starting Docker build for Debug version..."
-          # 使用 Dockerfile.debug (假设它在仓库根目录)
-          docker build -t crslab-builder-debug -f Dockerfile.debug . 
-          
-          echo "Extracting Debug binary from Docker container..."
-          docker create --name temp_builder_debug crslab-builder-debug
-          # Debug Dockerfile 将二进制文件放在 /crslab_comments_reptile_debug_final
-          docker cp temp_builder_debug:/crslab_comments_reptile_debug_final ./${{ steps.prepare_filenames.outputs.debug_asset_name }}
-          docker rm temp_builder_debug
-          
-          echo "Debug binary '${{ steps.prepare_filenames.outputs.debug_asset_name }}' successfully extracted."
-          ls -l ./${{ steps.prepare_filenames.outputs.debug_asset_name }}
-          file ./${{ steps.prepare_filenames.outputs.debug_asset_name }}
-
-      # --- 创建 GitHub Release ---
       - name: Create GitHub Release (创建 GitHub Release)
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
-          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile (${{ steps.prepare_filenames.outputs.BUILD_TYPE_DESCRIPTION_FOR_RELEASE_NAME }})
+          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile (${{ steps.build_params.outputs.build_type_description_for_display }})
           draft: ${{ github.event.inputs.draft }}
           prerelease: ${{ github.event.inputs.prerelease }}
           body: |
-            # Release ${{ github.event.inputs.tag }} (${{ env.build_type_description }})
+            # Release ${{ github.event.inputs.tag }} (${{ steps.build_params.outputs.build_type_description_for_display }})
 
             这是 **CRSLab Comments Reptile** 的一个新版本，针对 Linux (musl) 进行了完全静态构建。
 
             ## 此版本中的功能/更改:
             - 通过 GitHub Actions workflow_dispatch 手动构建。
-            - 构建类型: ${{ env.build_type_description }}.
+            - 构建类型: ${{ steps.build_params.outputs.build_type_description_for_display }}.
             - 包含 `opencc` (静态链接) 和 `openssl` (静态链接) 依赖。
             - 小型、静态链接的可执行文件，具有高可移植性。
             - ... (在此处添加您的特定发行说明。)
 
             ### 下载:
-            ${{ (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && format('- `{0}` (Linux, x86_64, musl 静态链接, 发布版本)', steps.prepare_filenames.outputs.release_asset_name) || '' }}
-            ${{ (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && format('- `{0}` (Linux, x86_64, musl 静态链接, 调试版本)', steps.prepare_filenames.outputs.debug_asset_name) || '' }}
+            ${{ (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success' && format('- `{0}` (Linux, x86_64, musl 静态链接, 发布版本)', steps.build_params.outputs.release_asset_name) || '' }}
+            ${{ (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success' && format('- `{0}` (Linux, x86_64, musl 静态链接, 调试版本)', steps.build_params.outputs.debug_asset_name) || '' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHU_TOKEN }} # 注意：这里应该是 GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 修正了 GITHU_TOKEN -> GITHUB_TOKEN
 
-      # --- 上传 Release Asset (Release 版本) ---
       - name: Upload Release Asset (Release) (上传 Release 版本资源)
-        if: success() && (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && steps.build_release.outcome == 'success'
+        # 仅当选择了 release_only 或 both，并且 build_release 作业成功时才上传
+        if: (github.event.inputs.build_type == 'release_only' || github.event.inputs.build_type == 'both') && needs.build_release.result == 'success'
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./${{ steps.prepare_filenames.outputs.release_asset_name }}
-          asset_name: ${{ steps.prepare_filenames.outputs.release_asset_name }}
+          asset_path: ./release_asset_dir/${{ steps.build_params.outputs.release_asset_name }}
+          asset_name: ${{ steps.build_params.outputs.release_asset_name }}
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- 上传 Release Asset (Debug 版本) ---
-      - name: Upload Release Asset (Debug) (上传 Debug 版本资源)
-        if: success() && (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && steps.build_debug.outcome == 'success'
+      - name: Upload Debug Asset (Debug) (上传 Debug 版本资源)
+        # 仅当选择了 debug_only 或 both，并且 build_debug 作业成功时才上传
+        if: (github.event.inputs.build_type == 'debug_only' || github.event.inputs.build_type == 'both') && needs.build_debug.result == 'success'
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./${{ steps.prepare_filenames.outputs.debug_asset_name }}
-          asset_name: ${{ steps.prepare_filenames.outputs.debug_asset_name }}
+          asset_path: ./debug_asset_dir/${{ steps.build_params.outputs.debug_asset_name }}
+          asset_name: ${{ steps.build_params.outputs.debug_asset_name }}
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
