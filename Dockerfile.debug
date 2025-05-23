@@ -190,24 +190,25 @@ RUN if [ -f /root/.cargo/bin/rustup ]; then \
         exit 1; \
     fi
 
-# 设置 .cargo/config.toml 指定 g++ 作为链接器并使用强制静态链接参数
+# 设置 .cargo/config.toml
 RUN mkdir -p .cargo && \
     echo '[target.x86_64-unknown-linux-gnu]' > .cargo/config.toml && \
     echo 'linker = "g++"' >> .cargo/config.toml && \
-    # 尝试让 g++ 进行全面静态链接
+    # *** 修改：简化 rustflags，更依赖 g++ -static 的行为，并确保 -no-pie ***
     echo 'rustflags = [' >> .cargo/config.toml && \
     echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
     echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-no-pie",' >> .cargo/config.toml && \
+    # 以下库由 g++ -static 应该自动处理，但如果仍然缺少，可以考虑重新加入
+    # echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && # -static 通常已包含此意图
+    # echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml &&
+    # echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml &&
+    # echo '  "-C", "link-arg=-lgcc_eh",' >> .cargo/config.toml &&
+    # echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml &&
     echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-Wl,-Bstatic",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lsupc++",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lgcc_eh",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lstdc++",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lgcc",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-ldl",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-no-pie"' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
+
 
 # 再次设置环境变量
 ENV OPENCC_STATIC=1
