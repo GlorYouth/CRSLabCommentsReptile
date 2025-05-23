@@ -3,70 +3,80 @@
 # 此版本会从源码编译 OpenCC 以实现静态链接
 
 # --- OpenCC 版本 ---
-ARG OPENCC_VERSION=1.1.7
+    ARG OPENCC_VERSION=1.1.7
 
-# 阶段 0: 构建 OpenCC 静态库
-FROM alpine:3.18 AS opencc_builder
-ARG OPENCC_VERSION
-WORKDIR /opt
-RUN apk add --no-cache cmake make g++ util-linux wget python3
-
-# 下载 OpenCC 源码
-RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
-    tar xzf opencc.tar.gz && \
-    rm opencc.tar.gz
-
-# 编译并安装 OpenCC 静态库
-RUN cd OpenCC-ver.${OPENCC_VERSION} && \
-    cmake . \
-        # OpenCC 自身的构建类型也设为 Debug (此注释必须在参数行的上方)
-        -DCMAKE_BUILD_TYPE=Debug \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    make -j$(nproc) && \
-    make install
-
-# 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
-FROM rust:alpine AS chef
-WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local
-RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-RUN cargo install cargo-chef --locked
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-# 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
-FROM rust:alpine AS planner
-WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local
-COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
-RUN chmod +x /usr/local/bin/cargo-chef
-COPY --from=chef /app/recipe.json recipe.json
-RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-RUN rustup target add x86_64-unknown-linux-musl
-ENV OPENSSL_STATIC=1
-ENV OPENCC_STATIC=1
-ENV RUSTFLAGS="-C target-feature=+crt-static"
-ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
-
-# 阶段 3: 构建应用程序本身 (Debug 模式)
-FROM rust:alpine AS builder
-WORKDIR /app
-COPY --from=opencc_builder /usr/local /usr/local
-COPY --from=planner /app/target target
-COPY --from=planner /usr/local/cargo /usr/local/cargo
-RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
-
-COPY . .
-RUN rustup target add x86_64-unknown-linux-musl
-
-# *** 修改：在 RUSTFLAGS 中同时添加 -static-libgcc 和 -static-libstdc++ ***
-ENV RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static-libgcc -C link-arg=-static-libstdc++"
-ENV PKG_CONFIG_ALLOW_CROSS=1
-ENV OPENSSL_STATIC=1
-ENV OPENCC_STATIC=1
-ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
-
-RUN cargo build --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
-RUN mv target/x86_64-unknown-linux-musl/debug/crslab_comments_reptile /crslab_comments_reptile_debug_final
+    # 阶段 0: 构建 OpenCC 静态库
+    FROM alpine:3.18 AS opencc_builder
+    ARG OPENCC_VERSION
+    WORKDIR /opt
+    RUN apk add --no-cache cmake make g++ util-linux wget python3
+    
+    # 下载 OpenCC 源码
+    RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
+        tar xzf opencc.tar.gz && \
+        rm opencc.tar.gz
+    
+    # 编译并安装 OpenCC 静态库
+    RUN cd OpenCC-ver.${OPENCC_VERSION} && \
+        cmake . \
+            # OpenCC 自身的构建类型也设为 Debug (此注释必须在参数行的上方)
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr/local && \
+        make -j$(nproc) && \
+        make install
+    
+    # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
+    FROM rust:alpine AS chef
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+    RUN cargo install cargo-chef --locked
+    COPY . .
+    RUN cargo chef prepare --recipe-path recipe.json
+    
+    # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
+    FROM rust:alpine AS planner
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+    RUN chmod +x /usr/local/bin/cargo-chef
+    COPY --from=chef /app/recipe.json recipe.json
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+    RUN rustup target add x86_64-unknown-linux-musl
+    ENV OPENSSL_STATIC=1
+    ENV OPENCC_STATIC=1
+    # RUSTFLAGS for chef cook stage (compiling dependencies) - can keep simpler static flags
+    ENV RUSTFLAGS="-C target-feature=+crt-static"
+    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+    RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
+    
+    # 阶段 3: 构建应用程序本身 (Debug 模式)
+    FROM rust:alpine AS builder
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    COPY --from=planner /app/target target
+    COPY --from=planner /usr/local/cargo /usr/local/cargo
+    # 确保 g++ 可用
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig 
+    
+    COPY . .
+    RUN rustup target add x86_64-unknown-linux-musl
+    
+    # *** 修改：创建 .cargo/config.toml 指定 g++ 作为链接器并设置静态链接标志 ***
+    # *** 同时移除此阶段的 ENV RUSTFLAGS ***
+    RUN mkdir -p .cargo && \
+        echo '[target.x86_64-unknown-linux-musl]' > .cargo/config.toml && \
+        echo 'linker = "g++"' >> .cargo/config.toml && \
+        echo 'rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]' >> .cargo/config.toml
+    
+    # ENV RUSTFLAGS="..." # 此行被移除，由 .cargo/config.toml 代替
+    
+    ENV PKG_CONFIG_ALLOW_CROSS=1
+    ENV OPENSSL_STATIC=1
+    ENV OPENCC_STATIC=1
+    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+    
+    RUN cargo build --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
+    RUN mv target/x86_64-unknown-linux-musl/debug/crslab_comments_reptile /crslab_comments_reptile_debug_final
+    
