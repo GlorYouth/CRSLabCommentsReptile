@@ -43,21 +43,21 @@ jobs:
         # 'run' 关键字允许执行命令行脚本
         run: |
           # 打印开始构建的日志信息
-          echo "Starting Docker build for CRSLabCommentSreptile..."
-          # 使用 Dockerfile.release 构建 Docker 镜像，并标记为 CRSLabCommentSreptile-musl-builder
-          # 注意：这里的 CRSLabCommentSreptile 应该是您项目/二进制文件的名称，如果之前有修改，这里也可能需要对应调整
-          docker build -t CRSLabCommentSreptile-musl-builder -f Dockerfile.release .
+          echo "Starting Docker build for crslab-comment-sreptile..."
+          # 使用 Dockerfile.release 构建 Docker 镜像，并标记为 crslab-comment-sreptile-musl-builder
+          # 注意：这里的 crslab-comment-sreptile 应该是您项目/二进制文件的名称，如果之前有修改，这里也可能需要对应调整
+          docker build -t crslab-comment-sreptile-musl-builder -f Dockerfile.release .
 
           # 打印从 Docker 容器提取二进制文件的日志信息
           echo "Extracting binary from Docker container..."
           # 创建一个临时 Docker 容器（基于刚构建的镜像），但不启动它
-          docker create --name temp_CRSLabCommentSreptile_builder CRSLabCommentSreptile-musl-builder
+          docker create --name temp_crslab-comment-sreptile_builder crslab-comment-sreptile-musl-builder
           # 从临时容器中将构建好的二进制文件复制到运行器文件系统
-          # 注意：这里的 /CRSLabCommentSreptile_final 是 Dockerfile 中最终二进制文件的路径
+          # 注意：这里的 /crslab-comment-sreptile_final 是 Dockerfile 中最终二进制文件的路径
           # 如果 Dockerfile 中 mv 命令的目标路径是 /crslab_comments_reptile_final，这里也要对应修改
-          docker cp temp_CRSLabCommentSreptile_builder:/crslab_comments_reptile_final ./crslab_comments_reptile_linux_musl
+          docker cp temp_crslab-comment-sreptile_builder:/crslab_comments_reptile_final ./crslab_comments_reptile_linux_musl
           # 删除临时容器
-          docker rm temp_CRSLabCommentSreptile_builder
+          docker rm temp_crslab-comment-sreptile_builder
 
           # 打印二进制文件成功提取的日志信息，并列出文件详情和类型
           # 注意：这里的文件名 crslab_comments_reptile_linux_musl 应与上面 docker cp 的目标文件名一致
