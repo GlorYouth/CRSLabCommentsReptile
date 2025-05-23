@@ -21,7 +21,9 @@ RUN pacman -Syu --noconfirm \
     python \
     git \
     # autoconf automake libtool 通常是 base-devel 的一部分或可单独安装
-    autoconf automake libtool && \
+    autoconf \
+    automake \
+    libtool && \
     # 清理 pacman 缓存
     pacman -Scc --noconfirm
 
@@ -43,6 +45,7 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
     cmake . \
         -DCMAKE_BUILD_TYPE=Debug \
         -DBUILD_SHARED_LIBS=OFF \
+        # 确保启用了 Marisa 支持
         -DENABLE_MARISA=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
@@ -53,24 +56,25 @@ RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION
 FROM archlinux:latest AS chef
 WORKDIR /app
 
-# 安装 Rust 工具链 和 OpenSSL (静态)
-# 在 Arch 上，openssl 包可能同时提供动态和静态库，或有专门的 openssl-static 包
+# 安装基础编译工具、OpenSSL 和 curl (用于下载 rustup-init)
 RUN pacman -Syu --noconfirm \
-    rustup \
     base-devel \
     openssl \
-    pkgconf && \
+    pkgconf \
+    curl \
+    git && \
     pacman -Scc --noconfirm
 
-# 设置 Rust 工具链 (如果需要特定版本或组件)
-RUN rustup-init -y --default-toolchain stable --profile minimal && \
-    # 根据需要，可以指定 target，但这里我们是在原生 Arch 环境编译，所以默认的 gnu target 即可
-    # 如果想交叉编译到 MUSL，则需要添加 musl target，但我们现在是尝试在 Arch (Glibc) 下静态编译
-    echo 'export PATH=/root/.cargo/bin:$PATH' >> /etc/profile.d/rustup.sh && \
-    /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu # 确保目标存在，尽管可能是默认的
-
-# 将 Rust 工具链路径添加到 PATH
+# 安装 Rust 工具链使用官方脚本，并确保 PATH 更新
+# 将 rustup 安装、PATH 设置、以及 rustup target add 放在同一个 RUN 指令中
+# 以确保 PATH 在后续命令中生效
 ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
+    # rustup-init 脚本会自动将 /root/.cargo/bin 添加到 PATH，但通常只对新的 shell 会话生效
+    # 所以我们在这里显式使用完整路径来调用 rustup，或者确保 ENV PATH 已更新并被此 RUN 指令的 shell 会话采纳
+    # 为了保险起见，后续的 rustup 调用也使用完整路径
+    /root/.cargo/bin/rustup target add x86_64-unknown-linux-gnu && \
+    echo 'export PATH=/root/.cargo/bin:$PATH' >> /root/.bashrc # 或者 /etc/profile.d/rustup.sh
 
 # 复制 OpenCC 和 Marisa
 COPY --from=opencc_builder /usr/local /usr/local
@@ -153,10 +157,10 @@ RUN mkdir -p .cargo && \
     # 但既然目标是“完全静态”，我们先尝试最强的选项
     echo 'rustflags = [' >> .cargo/config.toml && \
     echo '  "-C", "target-feature=+crt-static",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-static"' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-static",' >> .cargo/config.toml && \
     # echo '  "-C", "link-arg=-static-libstdc++",' >> .cargo/config.toml && \
     # echo '  "-C", "link-arg=-static-libgcc",' >> .cargo/config.toml && \
-    echo '  "-C", "link-arg=-lpthread"' >> .cargo/config.toml && \
+    echo '  "-C", "link-arg=-lpthread",' >> .cargo/config.toml && \
     # 有时静态链接也需要 dl
     echo '  "-C", "link-arg=-ldl"' >> .cargo/config.toml && \
     echo ']' >> .cargo/config.toml
