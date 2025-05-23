@@ -1,84 +1,78 @@
-name: Build and Release Rust Binary (Alpine Musl)
+name: Build and Release Rust Binary (Manual Trigger)
 
 on:
-  push:
-    tags:
-      - 'v*' # 当有以 'v' 开头的 Git Tag 被推送到仓库时触发，例如 v1.0.0, v1.0.1, v2.0.0-beta
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git Tag for the Release (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: 'Create as a draft release?'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build_and_upload_release_asset:
-    runs-on: ubuntu-latest # 使用最新的 Ubuntu 运行器，它预装了 Docker
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # 检出代码库
+        uses: actions/checkout@v4
 
       - name: Build Rust binary in Docker (Alpine Musl)
         run: |
           echo "Starting Docker build for crslabcommentsreptile..."
-          # 使用项目根目录下的 Dockerfile.release 来构建临时的 Docker 镜像
-          # -t 为镜像打标签，这里只是临时使用，所以可以随意命名
-          # -f 指定 Dockerfile 路径
-          # . 表示构建上下文是当前目录（即仓库根目录）
           docker build -t crslabcommentsreptile-musl-builder -f Dockerfile.release .
 
           echo "Extracting binary from Docker container..."
-          # 创建一个临时的 Docker 容器实例，但不运行它
           docker create --name temp_crslabcommentsreptile_builder crslabcommentsreptile-musl-builder
-
-          # 从容器中复制编译好的二进制文件到 GitHub Actions 运行器的工作目录
-          # /crslabcommentsreptile_final 是 Dockerfile.release 中 mv 命令的目标路径
-          # ./crslabcommentsreptile_linux_musl 是在 GitHub Actions 运行器上的输出文件名称
           docker cp temp_crslabcommentsreptile_builder:/crslabcommentsreptile_final ./crslabcommentsreptile_linux_musl
-
-          # 清理临时创建的 Docker 容器
           docker rm temp_crslabcommentsreptile_builder
 
           echo "Binary 'crslabcommentsreptile_linux_musl' successfully extracted."
-          # 检查提取的二进制文件是否存在且可执行
           ls -l ./crslabcommentsreptile_linux_musl
-          file ./crslabcommentsreptile_linux_musl # 查看文件类型，确认是静态链接的
+          file ./crslabcommentsreptile_linux_musl
 
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          # 使用 Git Tag 名称作为 Release 名称
-          tag_name: ${{ github.ref_name }}
-          # Release 的显示标题
-          name: Release ${{ github.ref_name }} - CRSLab Comments Reptile
-          # 是否为草稿 Release，设置为 false 表示直接发布
-          draft: false
-          # 是否为预发布 Release
-          prerelease: false
-          # Release 的描述信息
+          # 使用手动输入的 tag
+          tag_name: ${{ github.event.inputs.tag }}
+          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile
+          # 使用手动输入的 draft 和 prerelease
+          draft: ${{ github.event.inputs.draft }}
+          prerelease: ${{ github.event.inputs.prerelease }}
           body: |
-            # Release ${{ github.ref_name }}
+            # Release ${{ github.event.inputs.tag }}
 
             This is a new release of **CRSLab Comments Reptile** for Linux (musl) using a fully static build.
 
             ## Features/Changes in this release:
-            - Automated build via GitHub Actions.
+            - Built manually via GitHub Actions workflow_dispatch.
+            - Includes `opencc` and `openssl` dependencies.
             - Small, statically linked executable for high portability.
-            - ... (Add your specific release notes here. You can parse Git commits or write manually.)
+            - ... (Add your specific release notes here. You can refer to Git commits between the last release and this tag if desired.)
 
             ### Download:
-            - `crslabcommentsreptile-linux-musl-${{ github.ref_name }}` (Linux, x86_64, statically linked with musl)
+            - `crslabcommentsreptile-linux-musl-${{ github.event.inputs.tag }}` (Linux, x86_64, statically linked with musl)
         env:
-          # GitHub 提供的自动生成的令牌，用于认证
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Release Asset
         id: upload_asset
         uses: actions/upload-release-asset@v1
         with:
-          # 从上一步创建的 Release 中获取上传 URL
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          # 要上传的本地文件路径，这是我们从 Docker 容器中提取出来的二进制文件
           asset_path: ./crslabcommentsreptile_linux_musl
-          # 附件在 GitHub Release 页面上显示的名称
-          asset_name: crslabcommentsreptile-linux-musl-${{ github.ref_name }}
-          # 文件的 MIME 类型，对于二进制文件通常是 application/octet-stream
+          asset_name: crslabcommentsreptile-linux-musl-${{ github.event.inputs.tag }}
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
