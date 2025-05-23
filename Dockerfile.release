@@ -3,7 +3,7 @@
 
 # Stage 1: Build dependencies (using cargo-chef for optimization)
 # Use a Rust Alpine base image, which comes with musl libc
-FROM rust:latest-alpine AS chef
+FROM rust:alpine AS chef
 WORKDIR /app
 
 # Install musl-dev and other build essentials for static linking
@@ -17,7 +17,7 @@ COPY Cargo.toml Cargo.lock ./
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 2: Build all dependencies
-FROM rust:latest-alpine AS planner
+FROM rust:alpine AS planner
 WORKDIR /app
 COPY --from=chef /app/recipe.json recipe.json
 RUN apk add --no-cache musl-dev build-base # Ensure these are available in this stage too
