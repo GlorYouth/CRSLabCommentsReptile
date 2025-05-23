@@ -24,6 +24,12 @@ on:
         required: false # 此参数是可选的
         type: boolean # 参数类型为布尔值
         default: false # 默认值为 false
+      # 'build_debug_version' 输入参数：标记是否构建调试版本
+      build_debug_version: # 新增输入参数
+        description: 'Build a debug version instead of release? (构建调试版本而非发布版本?)'
+        required: false
+        type: boolean
+        default: false
 
 # 'jobs' 定义了工作流程中要执行的一个或多个作业
 jobs:
@@ -32,88 +38,101 @@ jobs:
     # 'runs-on' 指定了作业将在哪种类型的运行器上执行
     runs-on: ubuntu-latest # 使用 GitHub 托管的最新版 Ubuntu 运行器
 
-    permissions: # <--- 添加这个 permissions 块
-      contents: write # <--- 授予对仓库内容（包括 Releases）的写权限
+    permissions:
+      contents: write # 授予对仓库内容（包括 Releases）的写权限
     
     # 'steps' 定义了作业中要执行的一系列任务（步骤）
     steps:
+      # 步骤：设置构建变量
+      - name: Set build variables (设置构建变量)
+        id: vars # 给此步骤一个ID，方便后续引用
+        run: |
+          if [[ "${{ github.event.inputs.build_debug_version }}" == "true" ]]; then
+            # 如果用户选择构建 Debug 版本
+            echo "DOCKERFILE_NAME=Dockerfile.debug" >> $GITHUB_ENV # 设置 Dockerfile 名称
+            echo "FINAL_BINARY_FILENAME=crslab-comments-reptile-debug" >> $GITHUB_ENV # 设置最终二进制文件名
+            echo "DOCKER_OUTPUT_BINARY_PATH=/crslab_comments_reptile_debug_final" >> $GITHUB_ENV # Docker 内部二进制文件路径
+            echo "BUILD_PROFILE_NAME=debug" >> $GITHUB_ENV # 构建类型名称 (用于日志和 Release 描述)
+            echo "BUILD_TYPE_DESCRIPTION=调试版本 (Debug Build)" >> $GITHUB_ENV # 构建类型中文描述
+          else
+            # 否则，构建 Release 版本 (默认行为)
+            echo "DOCKERFILE_NAME=Dockerfile.release" >> $GITHUB_ENV
+            echo "FINAL_BINARY_FILENAME=crslab-comments-reptile" >> $GITHUB_ENV
+            echo "DOCKER_OUTPUT_BINARY_PATH=/crslab_comments_reptile_final" >> $GITHUB_ENV
+            echo "BUILD_PROFILE_NAME=release" >> $GITHUB_ENV
+            echo "BUILD_TYPE_DESCRIPTION=发布版本 (Release Build)" >> $GITHUB_ENV
+          fi
+
       # 第一个步骤：检出代码
-      - name: Checkout code # 步骤的名称，将显示在 GitHub Actions UI 中
+      - name: Checkout code (检出代码)
         uses: actions/checkout@v4 # 使用官方的 'checkout' action 来检出仓库代码，版本为 v4
 
       # 第二个步骤：在 Docker 中构建 Rust 二进制文件 (使用 Alpine Musl)
-      - name: Build Rust binary in Docker (Alpine Musl)
-        # 'run' 关键字允许执行命令行脚本
+      - name: Build Rust binary (${{ env.BUILD_PROFILE_NAME }}) (使用 Docker 构建 Rust 二进制文件 - ${{ env.BUILD_PROFILE_NAME }})
         run: |
-          # 打印开始构建的日志信息
-          echo "Starting Docker build for crslab-comment-sreptile..."
-          # 使用 Dockerfile.release 构建 Docker 镜像，并标记为 crslab-comment-sreptile-musl-builder
-          # 注意：这里的 crslab-comment-sreptile 应该是您项目/二进制文件的名称，如果之前有修改，这里也可能需要对应调整
-          docker build -t crslab-comment-sreptile-musl-builder -f Dockerfile.release .
+          # 打印开始构建的日志信息，包含构建类型
+          echo "Starting Docker build for crslab-comment-sreptile (${{ env.BUILD_PROFILE_NAME }})..."
+          # 使用选择的 Dockerfile 构建 Docker 镜像
+          # 注意：这里的 crslab-comment-sreptile 应该是您项目/二进制文件的名称
+          docker build -t crslab-comment-sreptile-musl-builder -f ${{ env.DOCKERFILE_NAME }} .
 
           # 打印从 Docker 容器提取二进制文件的日志信息
           echo "Extracting binary from Docker container..."
           # 创建一个临时 Docker 容器（基于刚构建的镜像），但不启动它
           docker create --name temp_crslab-comment-sreptile_builder crslab-comment-sreptile-musl-builder
           # 从临时容器中将构建好的二进制文件复制到运行器文件系统
-          # 注意：这里的 /crslab-comment-sreptile_final 是 Dockerfile 中最终二进制文件的路径
-          # 如果 Dockerfile 中 mv 命令的目标路径是 /crslab_comments_reptile_final，这里也要对应修改
-          docker cp temp_crslab-comment-sreptile_builder:/crslab_comments_reptile_final ./crslab-comments-reptile
+          # 使用之前设置的环境变量来确定源路径和目标文件名
+          docker cp temp_crslab-comment-sreptile_builder:${{ env.DOCKER_OUTPUT_BINARY_PATH }} ./${{ env.FINAL_BINARY_FILENAME }}
           # 删除临时容器
           docker rm temp_crslab-comment-sreptile_builder
 
           # 打印二进制文件成功提取的日志信息，并列出文件详情和类型
-          # 注意：这里的文件名 crslab-comments-reptile 应与上面 docker cp 的目标文件名一致
-          echo "Binary 'crslab-comments-reptile' successfully extracted."
-          ls -l ./crslab-comments-reptile
-          file ./crslab-comments-reptile
+          echo "Binary '${{ env.FINAL_BINARY_FILENAME }}' successfully extracted."
+          ls -l ./${{ env.FINAL_BINARY_FILENAME }}
+          file ./${{ env.FINAL_BINARY_FILENAME }}
 
       # 第三个步骤：创建 GitHub Release
-      - name: Create GitHub Release
+      - name: Create GitHub Release (创建 GitHub Release)
         id: create_release # 给这个步骤一个 ID，方便后续步骤引用其输出
         uses: softprops/action-gh-release@v2 # 使用 'softprops/action-gh-release' action 来创建 Release，版本为 v2
-        # 'with' 关键字用于向 action 传递参数
         with:
           # 使用手动触发时输入的 'tag' 作为 Release 的标签名
           tag_name: ${{ github.event.inputs.tag }}
-          # Release 的名称，结合了输入的标签和项目名
-          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile
+          # Release 的名称，结合了输入的标签、项目名和构建类型
+          name: Release ${{ github.event.inputs.tag }} - CRSLab Comments Reptile (${{ env.BUILD_TYPE_DESCRIPTION }})
           # 使用手动触发时输入的 'draft' 值
           draft: ${{ github.event.inputs.draft }}
           # 使用手动触发时输入的 'prerelease' 值
           prerelease: ${{ github.event.inputs.prerelease }}
           # Release 的正文内容，支持 Markdown 格式
           body: |
-            # Release ${{ github.event.inputs.tag }}  
+            # Release ${{ github.event.inputs.tag }}
 
-            This is a new release of **CRSLab Comments Reptile** for Linux (musl) using a fully static build.
+            这是 **CRSLab Comments Reptile** 的一个新版本 (${{ env.BUILD_TYPE_DESCRIPTION }})，针对 Linux (musl) 进行了完全静态构建。
 
-            ## Features/Changes in this release:
-            - Built manually via GitHub Actions workflow_dispatch.
-            - Includes `opencc` and `openssl` dependencies.
-            - Small, statically linked executable for high portability.
-            - ... (Add your specific release notes here. You can refer to Git commits between the last release and this tag if desired.)
+            ## 此版本中的功能/更改:
+            - 通过 GitHub Actions workflow_dispatch 手动构建 (${{ env.BUILD_TYPE_DESCRIPTION }})。
+            - 包含 `opencc` 和 `openssl` 依赖。
+            - 小型、静态链接的可执行文件，具有高可移植性。
+            - ... (在此处添加您的特定发行说明。如果需要，您可以参考上一个发行版和此标签之间的 Git 提交。)
 
-            ### Download:
-            - `crslab-comments-reptile` (Linux, x86_64, statically linked with musl)
-        # 'env' 关键字用于设置环境变量
+            ### 下载:
+            - `${{ env.FINAL_BINARY_FILENAME }}` (Linux, x86_64, musl 静态链接, ${{ env.BUILD_TYPE_DESCRIPTION }})
         env:
           # GITHUB_TOKEN 是一个特殊的 secret，用于授权 action 代表您与 GitHub API 交互
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 第四个步骤：上传 Release Asset (构建的二进制文件)
-      - name: Upload Release Asset
+      - name: Upload Release Asset (上传 Release Asset)
         id: upload_asset # 给这个步骤一个 ID
         uses: actions/upload-release-asset@v1 # 使用官方的 'upload-release-asset' action 来上传文件，版本为 v1
         with:
           # 上传 URL，从上一步 'create_release' 的输出中获取
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          # 要上传的文件的路径，指向从 Docker 中提取出来的二进制文件
-          # 注意：这里的文件名 crslab-comments-reptile 应与之前 docker cp 的目标文件名一致
-          asset_path: ./crslab-comments-reptile
-          # 上传后在 Release 页面显示的文件名
-          # 注意：这个名称应与 Release body 中描述的下载文件名一致
-          asset_name: crslab-comments-reptile
+          # 要上传的文件的路径，指向从 Docker 中提取出来的二进制文件 (使用环境变量)
+          asset_path: ./${{ env.FINAL_BINARY_FILENAME }}
+          # 上传后在 Release 页面显示的文件名 (使用环境变量)
+          asset_name: ${{ env.FINAL_BINARY_FILENAME }}
           # 文件的 MIME 类型
           asset_content_type: application/octet-stream
         env:

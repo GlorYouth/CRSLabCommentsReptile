@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.4
+# 用于构建 crslab_comments_reptile Rust 应用程序 DEBUG 版本的 Dockerfile (使用 musl 目标)
+# 此版本会从源码编译 OpenCC 以实现静态链接
+
+# --- OpenCC 版本 ---
+    ARG OPENCC_VERSION=1.1.7
+
+    # 阶段 0: 构建 OpenCC 静态库 (与 release 版本一致)
+    FROM alpine:3.18 AS opencc_builder
+    ARG OPENCC_VERSION
+    WORKDIR /opt
+    RUN apk add --no-cache cmake make g++ util-linux
+    RUN wget https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz -O opencc.tar.gz && \
+        tar xzf opencc.tar.gz && \
+        rm opencc.tar.gz
+    RUN cd OpenCC-${OPENCC_VERSION} && \
+        cmake . \
+            -DCMAKE_BUILD_TYPE=Debug \ # 注意：这里可以是 Debug 或 Release，取决于是否也想调试 OpenCC 本身
+            -DBUILD_SHARED_LIBS=OFF \
+            -DENABLE_GTEST=OFF \
+            -DENABLE_BENCHMARK=OFF \
+            -DENABLE_DARTS=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr/local && \
+        make -j$(nproc) && \
+        make install
+    
+    # 阶段 1: 构建依赖 (使用 cargo-chef 进行优化)
+    FROM rust:alpine AS chef
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+    RUN cargo install cargo-chef --locked
+    COPY . .
+    RUN cargo chef prepare --recipe-path recipe.json
+    
+    # 阶段 2: 构建所有依赖项 (planner 阶段 - Debug 模式)
+    FROM rust:alpine AS planner
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/bin/cargo-chef
+    RUN chmod +x /usr/local/bin/cargo-chef
+    COPY --from=chef /app/recipe.json recipe.json
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+    RUN rustup target add x86_64-unknown-linux-musl
+    ENV OPENSSL_STATIC=1
+    ENV OPENCC_STATIC=1
+    ENV RUSTFLAGS="-C target-feature=+crt-static"
+    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+    # 注意：移除了 --release 标志以构建 DEBUG 版本的依赖
+    RUN cargo chef cook --target x86_64-unknown-linux-musl --recipe-path recipe.json
+    
+    # 阶段 3: 构建应用程序本身 (Debug 模式)
+    FROM rust:alpine AS builder
+    WORKDIR /app
+    COPY --from=opencc_builder /usr/local /usr/local
+    COPY --from=planner /app/target target
+    COPY --from=planner /usr/local/cargo /usr/local/cargo
+    RUN apk add --no-cache musl-dev build-base openssl-dev gcc g++ perl pkgconfig
+    COPY . .
+    RUN rustup target add x86_64-unknown-linux-musl
+    ENV RUSTFLAGS="-C target-feature=+crt-static"
+    ENV PKG_CONFIG_ALLOW_CROSS=1
+    ENV OPENSSL_STATIC=1
+    ENV OPENCC_STATIC=1
+    ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}"
+    # 注意：移除了 --release 标志以构建 DEBUG 版本的应用程序
+    RUN cargo build --target x86_64-unknown-linux-musl --bin crslab_comments_reptile
+    RUN mv target/x86_64-unknown-linux-musl/debug/crslab_comments_reptile /crslab_comments_reptile_debug_final
+    
