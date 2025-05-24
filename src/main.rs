@@ -366,10 +366,6 @@ async fn task(
             "URL {} (ID: {}) JSON 解析未提取到摘要。启动 HTML 抓取作为后备方案。",
             key_url, value_id
         );
-        let mut file = std::fs::File::create(format!("{}.json", resource_name)).unwrap();
-        file.write_all(format!("URL {}\n",key_url).as_bytes()).unwrap();
-        file.write_all(serde_json::to_string_pretty(&serde_json::from_str::<Value>(&json_response_text).unwrap()).unwrap().as_ref()).unwrap();
-        file.flush().unwrap();
         // `key_url` 是 DBPedia 资源 URL (例如 http://dbpedia.org/resource/...)，适用于 HTML 抓取。
         // `client` 是此任务的 reqwest::Client 实例。
         extracted_data = twice_check(&client, &key_url, value_id).await;
